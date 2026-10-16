@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>De Rhymes Stock Console</title>
+<meta name="theme-color" content="#1F2166"><link rel="icon" href="logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head><body>
+<section id="login" class="login">
+  <form id="loginForm" class="card">
+    <img src="logo.png" alt="De Rhymes" class="logo" onerror="this.style.display='none'">
+    <h1>Sign in</h1>
+    <label>Email or username<input type="text" id="email" autocomplete="username" autocapitalize="none" required></label>
+    <label>Password<div class="withbtn"><input type="password" id="password" autocomplete="current-password" required><button type="button" id="showPw" class="btn ghost sm">Show</button></div></label>
+    <p id="loginErr" class="err"></p>
+    <button class="btn">Sign in</button>
+  </form>
+</section>
+<div id="app" hidden>
+  <aside id="side">
+    <div class="brand">
+      <img src="logo.png" alt="" onerror="this.style.display='none'">
+      <div><b>De Rhymes</b><span>STOCK CONSOLE</span></div>
+    </div>
+    <button id="newProd" class="newbtn">+ New product</button>
+    <nav>
+      <div class="grp">Daily use</div>
+      <button data-v="dashboard">Dashboard</button>
+      <button data-v="stockin">Receive stock</button>
+      <button data-v="stockout">Stock out</button>
+      <button data-v="products">Products<span class="badge bad" id="bLow" hidden></span></button>
+      <div class="grp">Records</div>
+      <button data-v="movements">Movements</button>
+      <button data-v="transactions" class="sa">Transactions</button>
+      <button data-v="expiry">Batches &amp; expiry<span class="badge bad" id="bExp" hidden></span></button>
+      <div class="grp">Tools</div>
+      <button data-v="pricing">Pricing calculator</button>
+      <button data-v="settings" class="adm">Settings</button>
+      <button data-v="staff" class="sup">Staff accounts</button>
+    </nav>
+    <div class="me"><b id="meName"></b><span>Signed in</span><button id="logout" class="out">Sign out</button></div>
+  </aside>
+  <div id="scrim"></div>
+  <main>
+    <header>
+      <button id="menu" aria-label="Toggle menu">☰</button>
+      <div class="ttl"><h2 id="title"></h2><p id="sub"></p></div>
+      <div class="actions">
+        <button class="btn" data-go="stockin">+ Stock in</button>
+      </div>
+    </header>
+
+    <section id="dashboard"></section>
+
+    <section id="products">
+      <div class="bar"><input id="pSearch" class="search" type="search" placeholder="Search by name, SKU, barcode or category"><div class="chips" id="pChips"><button type="button" data-f="all">All <b></b></button><button type="button" data-f="low">Low stock <b></b></button><button type="button" data-f="out">Out of stock <b></b></button></div></div>
+      <div id="pTable" class="card tbl"></div>
+    </section>
+
+    <section id="product"></section>
+
+    <section id="stockin">
+      <div class="seg" id="inMode">
+        <button type="button" data-m="new" aria-pressed="false">Add new stock<small>A product that is not in the system yet, stocked in at the same time</small></button>
+        <button type="button" data-m="batch" class="on" aria-pressed="true">Add new batch<small>Receive more of an existing product</small></button>
+      </div>
+
+      <form id="pForm" class="card grid" hidden>
+        <input type="hidden" id="p_id">
+        <label>Name<input id="p_name" required></label>
+        <label>SKU<div class="withbtn"><input id="p_sku" placeholder="Type or tap Auto"><button type="button" id="p_gen" class="btn ghost">Auto</button></div></label>
+        <label>Barcode<input id="p_barcode"></label>
+        <label>Category<select id="p_category" required></select></label>
+        <label>Supplier<input id="p_supplier"></label>
+        <label>Base unit (smallest unit you sell)<input id="p_unit" placeholder="piece, bottle, kg" required></label>
+        <label id="p_cost_l" hidden>Cost price per base unit (₦)<input id="p_cost" type="number" min="0" step="0.01"></label>
+
+        <div class="sub" id="packBox">
+          <h3>Packs <small>(optional. Name each pack and say how many base units it holds, e.g. Pack = 4, Roll = 10, Carton = 120)</small></h3>
+          <div id="packRows"></div>
+          <div><button type="button" id="addPack" class="btn ghost sm">+ Add pack</button></div>
+        </div>
+
+        <div class="sub" id="initStock">
+          <h3>Opening stock <small>(optional, leave quantity empty to save the product only)</small></h3>
+          <label>Purchase unit<select id="ns_u"></select></label>
+          <label>Quantity<input id="ns_q" type="number" min="0" step="any"></label>
+          <label>Unit cost per purchase unit (₦)<input id="ns_c" type="number" min="0" step="0.01"></label>
+          <label>Extra costs, total (₦)<input id="ns_x" type="number" min="0" step="0.01" value="0"></label>
+          <label>Invoice / reference<input id="ns_ref"></label>
+          <label>Batch number<input id="ns_b"></label>
+          <label>Expiry date<input id="ns_e" type="date"></label>
+          <label>Notes<input id="ns_n"></label>
+        </div>
+        <div class="row"><button class="btn" id="pSave">Save product &amp; stock in</button><button type="button" id="pReset" class="btn ghost">Clear</button></div>
+      </form>
+
+      <form id="inForm" class="card grid">
+        <div class="pick"><label for="in_s">Product</label><input id="in_s" type="search" placeholder="Search name, SKU or barcode" autocomplete="off"><input type="hidden" id="in_p"><div class="results" id="in_res" hidden></div><small class="hint" id="in_i"></small></div>
+        <label>Purchase unit<select id="in_u"></select></label>
+        <label>Quantity<input id="in_q" type="number" min="0" step="any" required></label>
+        <label>Unit cost per purchase unit (₦)<input id="in_c" type="number" min="0" step="0.01" required></label>
+        <label>Extra costs, total (₦)<input id="in_x" type="number" min="0" step="0.01" value="0"></label>
+        <label>Invoice / reference<input id="in_ref"></label>
+        <label>Batch number<input id="in_b" required></label>
+        <label>Expiry date<input id="in_e" type="date"></label>
+        <label>Notes<input id="in_n"></label>
+        <div class="row"><button class="btn">Receive stock</button></div>
+      </form>
+    </section>
+
+    <section id="stockout">
+      <form id="outForm" class="card grid">
+        <div class="pick"><label for="out_s">Product</label><input id="out_s" type="search" placeholder="Search name, SKU or barcode" autocomplete="off"><input type="hidden" id="out_p"><div class="results" id="out_res" hidden></div><small class="hint" id="out_i"></small></div>
+        <label>Unit to stock out<select id="out_u"></select></label>
+        <label>Quantity<input id="out_q" type="number" min="0" step="any" required></label>
+        <label>Reason<select id="out_reason"><option>Sale</option><option>Damaged</option><option>Expired</option><option>Missing</option><option>Theft or loss</option><option>Internal consumption</option><option>Supplier return</option><option>Stock transfer</option><option>Authorized correction</option></select></label>
+        <label>Note (required except for sales)<input id="out_n"></label>
+        <div class="row"><button class="btn">Record stock out</button></div>
+      </form>
+    </section>
+
+    <section id="movements"><div id="mTable" class="card tbl"></div></section>
+
+    <section id="transactions">
+      <div class="card grid" id="txFilters">
+        <label>View by<select id="tx_p"><option value="day">Day</option><option value="week">Week (Mon to Sun)</option><option value="month">Month</option><option value="range">Custom range</option></select></label>
+        <label id="tx_dl">Date<input type="date" id="tx_d"></label>
+        <label id="tx_fl" hidden>From<input type="date" id="tx_f"></label>
+        <label id="tx_tl" hidden>To<input type="date" id="tx_t"></label>
+        <label>Type<select id="tx_r"><option value="">All types</option></select></label>
+        <label>Search<input id="tx_q" type="search" placeholder="Product, SKU, note, reference or user"></label>
+        <div class="row"><button type="button" id="tx_csv" class="btn">Export CSV</button></div>
+      </div>
+      <p class="hint" id="txRange"></p>
+      <div id="txSum" class="stats"></div>
+      <div id="txTable" class="card tbl"></div>
+    </section>
+
+    <section id="pricing">
+      <form id="prForm" class="card grid" onsubmit="return false">
+        <div class="pick"><label for="pr_s">Product</label><input id="pr_s" type="search" placeholder="Search name, SKU or barcode" autocomplete="off"><input type="hidden" id="pr_p"><div class="results" id="pr_res" hidden></div><small class="hint" id="pr_i"></small></div>
+        <label>Cost price per base unit (₦)<input id="pr_c" type="number" min="0" step="0.01" required></label>
+        <label>Extra landed cost per unit (₦)<input id="pr_x" type="number" min="0" step="0.01" value="0"></label>
+        <label>Method<select id="pr_m"><option value="rule">Category rule (from Settings)</option><option value="markup">Percentage markup</option><option value="margin">Target gross margin</option><option value="fixed">Fixed profit</option></select></label>
+        <label id="pr_vl" hidden>Value<input id="pr_v" type="number" min="0" step="0.01"></label>
+        <label>Round up to nearest (₦)<select id="pr_r"><option>1</option><option>5</option><option>10</option><option>50</option><option>100</option></select></label>
+        <label>Minimum margin (%)<input id="pr_min" type="number" min="0" value="10"></label>
+      </form>
+      <div id="prOut" class="card"></div>
+    </section>
+
+    <section id="expiry"></section>
+
+    <section id="settings">
+      <form id="csForm" class="card grid">
+        <input type="hidden" id="cs_id">
+        <label>Category name<input id="cs_name" required></label>
+        <label>Default markup (%) <small>used when no rule below matches</small><input id="cs_def" type="number" min="0" step="0.01"></label>
+        <label>Minimum stock <small>low-stock alert starts at this level, counted in each product's base unit</small><input id="cs_min" type="number" min="0" step="any" placeholder="e.g. 10"></label>
+        <label>Expiry reminder (months before expiry)<input id="cs_exp" type="number" min="0.5" step="0.5" value="1" required></label>
+        <div class="sub" id="csBox">
+          <h3>Markup rules by cost price <small>(checked top to bottom, the first match is used. Example: cost &lt; 10000 use 30%, cost &gt;= 10000 use 40%)</small></h3>
+          <div id="csRules"></div>
+          <div><button type="button" id="addRule" class="btn ghost sm">+ Add rule</button></div>
+        </div>
+        <div class="row"><button class="btn" id="csSave">Save category</button><button type="button" id="csReset" class="btn ghost">Clear</button></div>
+      </form>
+      <div id="csList" class="card tbl"></div>
+    </section>
+
+    <section id="staff">
+      <form id="stForm" class="card grid">
+        <label>Full name<input id="st_name" required></label>
+        <label>Username<input id="st_user" required autocapitalize="none" placeholder="e.g. amaka"></label>
+        <label>Email <small>optional, leave empty if they have none</small><input id="st_email" type="email"></label>
+        <label>Password<input id="st_pw" type="text" minlength="6" required autocomplete="off"></label>
+        <label>Role<select id="st_role"><option value="staff">Staff</option><option value="admin">Admin</option></select></label>
+        <div class="row"><button class="btn" id="stSave">Create account</button></div>
+      </form>
+      <div id="stList" class="card tbl"></div>
+    </section>
+  </main>
+</div>
+<div id="toast" role="status"></div>
+<script type="module" src="app.js"></script>
+</body></html>
