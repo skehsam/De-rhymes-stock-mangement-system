@@ -15,6 +15,7 @@
     <label>Password<div class="withbtn"><input type="password" id="password" autocomplete="current-password" required><button type="button" id="showPw" class="btn ghost sm">Show</button></div></label>
     <p id="loginErr" class="err"></p>
     <button class="btn">Sign in</button>
+    <button type="button" id="bioLogin" class="btn ghost" hidden>Sign in with Face ID / fingerprint</button>
   </form>
 </section>
 <div id="app" hidden>
@@ -39,7 +40,7 @@
       <button data-v="settings" class="adm">Settings</button>
       <button data-v="staff" class="sup">Staff accounts</button>
     </nav>
-    <div class="me"><b id="meName"></b><span>Signed in</span><button id="logout" class="out">Sign out</button></div>
+    <div class="me"><b id="meName"></b><span>Signed in</span><button id="bioToggle" class="out" style="margin-bottom:8px" hidden></button><button id="logout" class="out">Sign out</button></div>
   </aside>
   <div id="scrim"></div>
   <main>

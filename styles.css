@@ -160,4 +160,4 @@ th[data-k]:hover{color:var(--navy)}
 .cpy:hover{background:#f3f4f8;border-color:var(--blue)}
 .cpy.done{color:var(--green);border-color:var(--green)}
 /* staff accounts tab: superadmin only */
-body:not(.super) .sup{display:none!important}
+body:not(.super) .sup{display:none!important}   

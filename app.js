@@ -556,3 +556,51 @@ $("stForm").onsubmit=e=>{e.preventDefault();guard($("stSave"),async()=>{
     t.set(doc(db,"users",uid),{name,username:un,email,synthetic,role:rl,active:true,createdAt:serverTimestamp()});
     t.set(doc(db,"usernames",un),{uid,email})});
   $("stForm").reset();await staffView();toast("Account created")})};
+// ---- biometric login (WebAuthn + PRF). The password is stored encrypted on this device only.
+const BIO_KEY="dr_bio_v1",bu8=s=>Uint8Array.from(atob(s.replace(/-/g,"+").replace(/_/g,"/")),c=>c.charCodeAt(0));
+const b64=u=>btoa(String.fromCharCode(...new Uint8Array(u)));
+const bioSalt=new TextEncoder().encode("de-rhymes-stock-console-bio-v1");
+const bioRec=()=>{try{return JSON.parse(localStorage.getItem(BIO_KEY))}catch{return null}};
+const bioSupported=async()=>!!(window.PublicKeyCredential&&await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable?.().catch(()=>false));
+const bioAesKey=async prf=>crypto.subtle.importKey("raw",await crypto.subtle.digest("SHA-256",prf),"AES-GCM",false,["encrypt","decrypt"]);
+async function bioPrf(credId){ // asks for Face ID / fingerprint and returns the device-bound secret
+  const a=await navigator.credentials.get({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)),rpId:location.hostname,
+    allowCredentials:credId?[{type:"public-key",id:credId}]:[],userVerification:"required",timeout:60000,
+    extensions:{prf:{eval:{first:bioSalt}}}}});
+  const r=a.getClientExtensionResults().prf?.results?.first;
+  if(!r)throw new Error("This browser or device does not support biometric login. Please update it or use your password.");
+  return{prf:r,id:new Uint8Array(a.rawId)}}
+async function bioEnable(){
+  if(!await bioSupported())throw new Error("This device has no Face ID or fingerprint available.");
+  const pw=prompt("Enter your password to turn on biometric login on this device");if(!pw)return;
+  try{await signInWithEmailAndPassword(auth,user.email,pw)}catch{throw new Error("Wrong password.")}
+  const cred=await navigator.credentials.create({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)),
+    rp:{name:"De Rhymes Stock Console",id:location.hostname},
+    user:{id:new TextEncoder().encode(user.uid).slice(0,64),name:user.email,displayName:user.email},
+    pubKeyCredParams:[{type:"public-key",alg:-7},{type:"public-key",alg:-257}],
+    authenticatorSelection:{authenticatorAttachment:"platform",userVerification:"required",residentKey:"preferred"},
+    timeout:60000,extensions:{prf:{}}}});
+  const id=new Uint8Array(cred.rawId),{prf}=await bioPrf(id); // second prompt reads the secret
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=await crypto.subtle.encrypt({name:"AES-GCM",iv},await bioAesKey(prf),new TextEncoder().encode(JSON.stringify({e:user.email,p:pw})));
+  localStorage.setItem(BIO_KEY,JSON.stringify({id:b64(id),iv:b64(iv),ct:b64(ct)}));
+  bioUi();toast("Biometric login turned on for this device")}
+async function bioSignIn(){
+  const rec=bioRec();if(!rec)return;
+  const {prf}=await bioPrf(bu8(rec.id));
+  const pt=await crypto.subtle.decrypt({name:"AES-GCM",iv:bu8(rec.iv)},await bioAesKey(prf),bu8(rec.ct));
+  const c=JSON.parse(new TextDecoder().decode(pt));
+  await signInWithEmailAndPassword(auth,c.e,c.p)}
+function bioUi(){
+  $("bioLogin").hidden=!bioRec();
+  const t=$("bioToggle");t.hidden=!user;t.textContent=bioRec()?"Turn off biometric login":"Turn on biometric login"}
+$("bioLogin").onclick=()=>guard($("bioLogin"),async()=>{
+  try{await bioSignIn()}
+  catch(e){if(e.name==="NotAllowedError")return; // cancelled
+    if(e.code?.startsWith("auth/")){localStorage.removeItem(BIO_KEY);bioUi();throw new Error("Your password has changed. Sign in with it once, then turn biometric login on again.")}
+    throw e}});
+$("bioToggle").onclick=()=>guard($("bioToggle"),async()=>{
+  if(bioRec()){localStorage.removeItem(BIO_KEY);bioUi();toast("Biometric login turned off");return}
+  try{await bioEnable()}catch(e){if(e.name==="NotAllowedError")return;throw e}});
+onAuthStateChanged(auth,bioUi);
+bioUi();
