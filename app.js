@@ -61,9 +61,12 @@ const live=B=>B.filter(b=>b.qtyRemaining>0);
 const prodOf=id=>P.find(p=>p.id===id);
 const batchWindow=b=>windowDays(prodOf(b.productId));
 const TEST={"<":(c,v)=>c<v,"<=":(c,v)=>c<=v,">":(c,v)=>c>v,">=":(c,v)=>c>=v,"=":(c,v)=>c===v,"<>":(c,v)=>c!==v};
+// returns {retail, wholesale} (either may be null) or null when nothing matches
 function ruleMarkup(cat,cost){if(!cat)return null;
-  for(const r of cat.rules||[])if(TEST[r.op]?.(cost,Number(r.value)))return Number(r.markup);
-  return cat.defaultMarkup===""||cat.defaultMarkup==null?null:Number(cat.defaultMarkup)}
+  const n=v=>v===""||v==null?null:Number(v);
+  for(const r of cat.rules||[])if(TEST[r.op]?.(cost,Number(r.value)))return{retail:n(r.markup),wholesale:n(r.wholesale)};
+  const d={retail:n(cat.defaultMarkup),wholesale:n(cat.defaultWholesale)};
+  return d.retail==null&&d.wholesale==null?null:d}
 
 // ---- data
 async function load(){
@@ -186,7 +189,8 @@ async function prodDetail(){
   <div class="stats">
     ${st("In stock",`${p.stock} ${esc(p.unit)}`,status,"p")}
     ${st("Cost price",naira(p.cost),"per "+esc(p.unit))}
-    ${st("Selling price",p.price>0?naira(p.price)+cpy(p.price):"Not set","per "+esc(p.unit),"p")}
+    ${st("Retail price",p.price>0?naira(p.price)+cpy(p.price):"Not set","per "+esc(p.unit),"p")}
+    ${st("Wholesale price",p.wholesalePrice>0?naira(p.wholesalePrice)+cpy(p.wholesalePrice):"Not set","per "+esc(p.unit),"p")}
     ${st("Gross margin",margin==null?"—":margin.toFixed(1)+"%","profit ÷ price")}
     ${st("Stock cost value",naira(p.stock*p.cost),"what this stock cost")}
     ${st("Stock retail value",naira(p.stock*p.price),"at current price","p")}
@@ -204,7 +208,7 @@ async function prodDetail(){
     <div><dt>Added</dt><dd>${fmtDate(p.createdAt)}</dd></div>
     <div><dt>Last updated</dt><dd>${fmtDate(p.updatedAt)}</dd></div>
   </dl></div>
-  ${packs.length?`<div class="card tbl"><h4>PACKS AND PACK PRICES</h4><table><tr><th>Pack</th><th>Contains</th><th>Cost</th><th>Selling price</th></tr>${packs.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.qty} ${esc(p.unit)}</td><td>${naira(p.cost*x.qty)}</td><td>${x.price!=null?naira(x.price)+cpy(x.price):"Not set"}</td></tr>`).join("")}</table></div>`:""}
+  ${packs.length?`<div class="card tbl"><h4>PACKS AND PACK PRICES</h4><table><tr><th>Pack</th><th>Contains</th><th>Cost</th><th>Retail price</th><th>Wholesale price</th></tr>${packs.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.qty} ${esc(p.unit)}</td><td>${naira(p.cost*x.qty)}</td><td>${x.price!=null?naira(x.price)+cpy(x.price):"Not set"}</td><td>${x.wholesale!=null?naira(x.wholesale)+cpy(x.wholesale):"Not set"}</td></tr>`).join("")}</table></div>`:""}
   <div class="card tbl"><h4>BATCHES</h4>${bs.length?`<table><tr><th>Batch</th><th>Received</th><th>Qty received</th><th>Remaining</th><th>Unit cost</th><th>Expiry</th><th>Status</th><th>Reference</th><th>By</th></tr>${bs.map(b=>`<tr><td>${esc(b.batchNo)}</td><td>${fmtDate(b.receivedAt)}</td><td>${b.qtyReceived}</td><td>${b.qtyRemaining}</td><td>${naira(b.unitCost)}</td><td>${fmtDate(b.expiry)}</td><td>${bst(b)}</td><td>${esc(b.ref||"—")}</td><td>${esc(b.by||"")}</td></tr>`).join("")}</table>`:'<p class="empty">No batches yet.</p>'}</div>
   <div class="card tbl" id="pd_moves"><h4>MOVEMENT HISTORY</h4><p class="empty">Loading…</p></div>
   ${isAdmin()?'<div class="card tbl" id="pd_prices"><h4>PRICE HISTORY</h4><p class="empty">Loading…</p></div>':""}`;
@@ -277,7 +281,7 @@ $("pForm").onsubmit=e=>{e.preventDefault();guard($("pSave"),async()=>{
   const packs=readPacks(true);
   const old=id?prodOf(id):null;
   // keep any saved pack prices when the pack name and size are unchanged
-  d.packs=packs.map(x=>{const o=old&&packsOf(old).find(y=>y.name===x.name&&y.qty===x.qty&&y.price!=null);return o?{...x,price:o.price}:x});
+  d.packs=packs.map(x=>{const o=old&&packsOf(old).find(y=>y.name===x.name&&y.qty===x.qty&&y.price!=null);return o?{...x,price:o.price,...(o.wholesale!=null?{wholesale:o.wholesale}:{})}:x});
   if(id){d.cost=parseFloat($("p_cost").value)||0;
     await runTransaction(db,async t=>t.update(doc(db,"products",id),{...d,updatedAt:serverTimestamp()}));
     $("pReset").click();await go("products");toast("Product saved");return}
@@ -389,49 +393,54 @@ function calc(){
   const baseCost=num("pr_c"),cost=baseCost+num("pr_x"),v=num("pr_v"),minM=num("pr_min");
   $("pr_vl").hidden=m==="rule";$("pr_v").required=m!=="rule";
   $("pr_vl").firstChild.textContent=m==="fixed"?"Fixed profit (₦)":m==="markup"?"Markup (%)":"Target gross margin (%)";
-  let sp0=0,err="",note="";
+  let sp0=0,sw0=null,err="",note="";
   if(m==="rule"){
     if(!p)err="Search and choose a product to use its category rule.";
     else{const mk=ruleMarkup(catOf(p),baseCost);
-      if(mk==null)err=`No markup rule matches for the category "${p.category}". Add or fix it in Settings.`;
-      else{sp0=cost*(1+mk/100);note=`Category rule: ${mk}% markup (${p.category})`}}}
+      if(!mk||mk.retail==null)err=`No retail markup rule matches for the category "${p.category}". Add or fix it in Settings.`;
+      else{sp0=cost*(1+mk.retail/100);
+        if(mk.wholesale!=null)sw0=cost*(1+mk.wholesale/100);
+        note=`Category rule: ${mk.retail}% retail`+(mk.wholesale!=null?`, ${mk.wholesale}% wholesale`:"")+` (${p.category})`}}}
   else if(m==="markup")sp0=cost*(1+v/100);
   else if(m==="fixed")sp0=cost+v;
   else if(v>=100)err="Margin must be below 100%.";else sp0=cost/(1-v/100);
   const roundUp=x=>Math.ceil(x/step-1e-9)*step;
   const sp=roundUp(sp0),profit=sp-cost,margin=sp?profit/sp*100:0,markup=cost?profit/cost*100:0;
-  const warn=!err&&(sp<cost?"Selling price is below cost.":margin<minM?`Margin is below your ${minM}% minimum.`:"");
+  const sw=sw0==null?null:roundUp(sw0);
+  const warn=!err&&(sp<cost?"Selling price is below cost.":sw!=null&&sw<cost?"Wholesale price is below cost.":margin<minM?`Margin is below your ${minM}% minimum.`:"");
   const s=(b,l,t="b")=>`<div class="stat ${t}"><small>${l}</small><b>${b}</b></div>`;
   const packRows=p?packsOf(p).map(pk=>{const price=roundUp(sp0*pk.qty),pc=cost*pk.qty;
-    return {name:pk.name,qty:pk.qty,pc,price,pr:price-pc}}):[];
-  $("prOut").innerHTML=err?`<p class="err">${esc(err)}</p>`:`${note?`<p class="hint">${esc(note)}</p>`:""}<div class="stats">${s(naira(sp)+cpy(sp),`Selling price per ${esc(p?.unit||"unit")}`,"p")}${s(naira(profit),"Profit per unit")}
+    return {name:pk.name,qty:pk.qty,pc,price,wprice:sw0==null?null:roundUp(sw0*pk.qty),pr:price-pc}}):[];
+  $("prOut").innerHTML=err?`<p class="err">${esc(err)}</p>`:`${note?`<p class="hint">${esc(note)}</p>`:""}<div class="stats">${s(naira(sp)+cpy(sp),`Retail price per ${esc(p?.unit||"unit")}`,"p")}${sw!=null?s(naira(sw)+cpy(sw),`Wholesale price per ${esc(p?.unit||"unit")}`,"p"):""}${s(naira(profit),"Retail profit per unit")}${sw!=null?s(naira(sw-cost),"Wholesale profit per unit"):""}
   ${s(margin.toFixed(1)+"%","Gross margin (profit ÷ price)","p")}${s(markup.toFixed(1)+"%","Markup (profit ÷ cost)")}
   ${p?s(naira(profit*p.stock),`Profit at current stock (${p.stock} ${esc(p.unit)})`):""}</div>
-  ${packRows.length>1?`<div class="tbl"><table><tr><th>Pack</th><th>Contains</th><th>Cost</th><th>Selling price</th><th>Profit</th></tr>${packRows.map(r=>`<tr><td>${esc(r.name)}</td><td>${r.qty} ${esc(p.unit)}</td><td>${naira(r.pc)}</td><td><b>${naira(r.price)}</b>${cpy(r.price)}</td><td>${naira(r.pr)}</td></tr>`).join("")}</table></div>`:""}
+  ${packRows.length>1?`<div class="tbl"><table><tr><th>Pack</th><th>Contains</th><th>Cost</th><th>Retail price</th>${sw!=null?"<th>Wholesale price</th>":""}<th>Retail profit</th></tr>${packRows.map(r=>`<tr><td>${esc(r.name)}</td><td>${r.qty} ${esc(p.unit)}</td><td>${naira(r.pc)}</td><td><b>${naira(r.price)}</b>${cpy(r.price)}</td>${sw!=null?`<td><b>${naira(r.wprice)}</b>${cpy(r.wprice)}</td>`:""}<td>${naira(r.pr)}</td></tr>`).join("")}</table></div>`:""}
   ${warn?`<p class="err">${esc(warn)}</p>`:""}${p&&isAdmin()?`<button class="btn" id="apply" type="button">Apply prices to ${esc(p.name)}</button>`:""}`;
   $("apply")?.addEventListener("click",ev=>guard(ev.target,async()=>{
     if(sp<=0)throw new Error("Selling price must be greater than zero.");
     if(warn&&!confirm(warn+" Apply anyway?"))return;
-    const packs=packRows.slice(1).map(r=>({name:r.name,qty:r.qty,price:r.price}));
-    await runTransaction(db,async t=>{t.update(doc(db,"products",p.id),{price:sp,packs,updatedAt:serverTimestamp()});
-      t.set(doc(collection(db,"priceChanges")),{productId:p.id,oldPrice:p.price,newPrice:sp,by:user.email,at:serverTimestamp()})});
+    const packs=packRows.slice(1).map(r=>({name:r.name,qty:r.qty,price:r.price,...(r.wprice!=null?{wholesale:r.wprice}:{})}));
+    await runTransaction(db,async t=>{t.update(doc(db,"products",p.id),{price:sp,...(sw!=null?{wholesalePrice:sw}:{}),packs,updatedAt:serverTimestamp()});
+      t.set(doc(collection(db,"priceChanges")),{productId:p.id,oldPrice:p.price,newPrice:sp,...(sw!=null?{oldWholesale:p.wholesalePrice??null,newWholesale:sw}:{}),by:user.email,at:serverTimestamp()})});
     await load();calc();toast("Selling prices updated")}));
 }
 $("prForm").addEventListener("input",calc);
 
 // ---- settings: categories, markup rules, expiry reminders (admins only)
 const OPS=["<","<=",">",">=","=","<>"];
-function ruleRow(r={op:"<",value:"",markup:""}){const d=document.createElement("div");d.className="rulerow";
-  d.innerHTML=`<span>If cost</span><select class="r_op">${OPS.map(o=>`<option value="${esc(o)}"${o===r.op?" selected":""}>${esc(o)}</option>`).join("")}</select><input class="r_v" type="number" min="0" step="0.01" placeholder="Cost (₦)" value="${esc(r.value)}"><span>use</span><input class="r_m" type="number" min="0" step="0.01" placeholder="Markup %" value="${esc(r.markup)}"><span>%</span><button type="button" class="btn ghost sm r_x">Remove</button>`;
+function ruleRow(r={op:"<",value:"",markup:"",wholesale:""}){const d=document.createElement("div");d.className="rulerow";
+  d.innerHTML=`<span>If cost</span><select class="r_op">${OPS.map(o=>`<option value="${esc(o)}"${o===r.op?" selected":""}>${esc(o)}</option>`).join("")}</select><input class="r_v" type="number" min="0" step="0.01" placeholder="Cost (₦)" value="${esc(r.value)}"><span>retail</span><input class="r_m" type="number" min="0" step="0.01" placeholder="Retail %" value="${esc(r.markup)}"><span>% wholesale</span><input class="r_w" type="number" min="0" step="0.01" placeholder="Wholesale %" value="${esc(r.wholesale??"")}"><span>%</span><button type="button" class="btn ghost sm r_x">Remove</button>`;
   $("csRules").append(d)}
 $("addRule").onclick=()=>ruleRow();
 $("csRules").addEventListener("click",e=>{if(e.target.closest(".r_x"))e.target.closest(".rulerow").remove()});
-const ruleText=c=>[...(c.rules||[]).map(r=>`cost ${r.op} ${Number(r.value).toLocaleString("en-NG")} → ${r.markup}%`),c.defaultMarkup===""||c.defaultMarkup==null?"":`otherwise ${c.defaultMarkup}%`].filter(Boolean).join("; ")||"No rules";
+const ruleText=c=>{const e=v=>v===""||v==null;
+  return [...(c.rules||[]).map(r=>`cost ${r.op} ${Number(r.value).toLocaleString("en-NG")} → retail ${r.markup}%${e(r.wholesale)?"":`, wholesale ${r.wholesale}%`}`),
+  e(c.defaultMarkup)&&e(c.defaultWholesale)?"":`otherwise retail ${e(c.defaultMarkup)?"none":c.defaultMarkup+"%"}, wholesale ${e(c.defaultWholesale)?"none":c.defaultWholesale+"%"}`].filter(Boolean).join("; ")||"No rules"};
 function settingsView(){
   $("csList").innerHTML=C.length?"<table><tr><th>Category</th><th>Markup rules</th><th>Minimum stock</th><th>Expiry reminder</th><th>Products</th><th></th></tr>"+C.map(c=>`<tr><td>${esc(c.name)}</td><td style="white-space:normal">${esc(ruleText(c))}</td><td>${c.minStock===""||c.minStock==null?"Not set":c.minStock}</td><td>${c.expiryMonths} mo before</td><td>${P.filter(p=>p.category===c.name).length}</td>
     <td><button class="btn sm ghost" data-ce="${c.id}">Edit</button> <button class="btn sm ghost" data-cd="${c.id}">Delete</button></td></tr>`).join("")+"</table>":'<p class="empty">No categories yet. Add your first one above.</p>';
   $("csList").querySelectorAll("[data-ce]").forEach(b=>b.onclick=()=>{const c=C.find(x=>x.id===b.dataset.ce);
-    $("csForm").reset();$("csRules").innerHTML="";$("cs_id").value=c.id;$("cs_name").value=c.name;$("cs_def").value=c.defaultMarkup??"";$("cs_exp").value=c.expiryMonths??1;$("cs_min").value=c.minStock??"";
+    $("csForm").reset();$("csRules").innerHTML="";$("cs_id").value=c.id;$("cs_name").value=c.name;$("cs_def").value=c.defaultMarkup??"";$("cs_dw").value=c.defaultWholesale??"";$("cs_exp").value=c.expiryMonths??1;$("cs_min").value=c.minStock??"";
     (c.rules||[]).forEach(r=>ruleRow(r));scrollTo(0,0)});
   $("csList").querySelectorAll("[data-cd]").forEach(b=>b.onclick=()=>guard(b,async()=>{
     const c=C.find(x=>x.id===b.dataset.cd);
@@ -446,13 +455,13 @@ $("csForm").onsubmit=e=>{e.preventDefault();guard($("csSave"),async()=>{
   if(!name)throw new Error("Enter a category name.");
   if(C.some(c=>c.name.toLowerCase()===name.toLowerCase()&&c.id!==id))throw new Error("That category already exists.");
   const rules=[...document.querySelectorAll("#csRules .rulerow")].map(r=>{
-    const op=r.querySelector(".r_op").value,v=r.querySelector(".r_v").value,mk=r.querySelector(".r_m").value;
-    if(v===""||mk==="")throw new Error("Fill in the cost and markup for every rule, or remove the empty rule.");
-    return{op,value:parseFloat(v),markup:parseFloat(mk)}});
-  const defRaw=$("cs_def").value,expiryMonths=parseFloat($("cs_exp").value);
+    const op=r.querySelector(".r_op").value,v=r.querySelector(".r_v").value,mk=r.querySelector(".r_m").value,wh=r.querySelector(".r_w").value;
+    if(v===""||mk==="")throw new Error("Fill in the cost and retail markup for every rule, or remove the empty rule.");
+    return{op,value:parseFloat(v),markup:parseFloat(mk),wholesale:wh===""?"":parseFloat(wh)}});
+  const defRaw=$("cs_def").value,dwRaw=$("cs_dw").value,expiryMonths=parseFloat($("cs_exp").value);
   if(!(expiryMonths>0))throw new Error("Expiry reminder must be above zero months.");
   const minRaw=$("cs_min").value;if(minRaw!==""&&!(parseFloat(minRaw)>=0))throw new Error("Minimum stock cannot be negative.");
-  const data={name,minStock:minRaw===""?"":parseFloat(minRaw),rules,defaultMarkup:defRaw===""?"":parseFloat(defRaw),expiryMonths,updatedAt:serverTimestamp()};
+  const data={name,minStock:minRaw===""?"":parseFloat(minRaw),rules,defaultMarkup:defRaw===""?"":parseFloat(defRaw),defaultWholesale:dwRaw===""?"":parseFloat(dwRaw),expiryMonths,updatedAt:serverTimestamp()};
   const old=id?C.find(c=>c.id===id):null,renamed=old&&old.name!==name?P.filter(p=>p.category===old.name):[];
   await runTransaction(db,async t=>{
     t.set(id?doc(db,"categories",id):doc(collection(db,"categories")),data);
