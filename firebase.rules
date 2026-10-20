@@ -1,10 +1,9 @@
 rules_version='2';
 service cloud.firestore { match /databases/{db}/documents {
   function role(){return get(/databases/$(db)/documents/users/$(request.auth.uid)).data.role}
-  function ok(){return request.auth!=null && exists(/databases/$(db)/documents/users/$(request.auth.uid)) && get(/databases/$(db)/documents/users/$(request.auth.uid)).data.get('active',true)!=false}
+  function ok(){return request.auth!=null && exists(/databases/$(db)/documents/users/$(request.auth.uid))}
   function admin(){return ok() && role() in ['admin','superadmin']}
   match /users/{u}{allow read:if request.auth!=null&&(request.auth.uid==u||admin()); allow write:if ok()&&role()=='superadmin'}
-  match /usernames/{n}{allow get:if true; allow list:if false; allow write:if ok()&&role()=='superadmin'}
   match /categories/{c}{allow read:if ok(); allow write:if admin()}
   match /settings/{s}{allow read:if ok(); allow write:if admin()}
   match /products/{p}{allow read:if ok(); allow delete:if false;
@@ -12,5 +11,6 @@ service cloud.firestore { match /databases/{db}/documents {
     allow update:if admin()||(ok()&&request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock','cost','price','category','updatedAt']))}
   match /batches/{b}{allow read,create,update:if ok(); allow delete:if false}
   match /movements/{m}{allow read:if ok(); allow create:if admin()||(ok()&&request.resource.data.reason in ['Stock in','Sale']); allow update,delete:if false}
+  match /sales/{s}{allow read,create:if ok(); allow update,delete:if false}
   match /priceChanges/{c}{allow read,create:if admin(); allow update,delete:if false}
 }}

@@ -107,7 +107,7 @@ h3{color:var(--navy);margin:0 0 8px}
 /* packs, settings rules, staff view */
 .staff .adm{display:none!important}
 #packRows,#csRules{grid-column:1/-1;display:grid;gap:8px}
-.packrow{display:grid;grid-template-columns:2fr 1fr auto;gap:8px;align-items:center}
+.packrow{display:grid;grid-template-columns:2fr 1.2fr 1fr 1fr auto;gap:8px;align-items:center}
 .rulerow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .rulerow input{width:130px}.rulerow select{width:80px}
 .sub>div:last-child{grid-column:1/-1}
@@ -161,3 +161,50 @@ th[data-k]:hover{color:var(--navy)}
 .cpy.done{color:var(--green);border-color:var(--green)}
 /* staff accounts tab: superadmin only */
 body:not(.super) .sup{display:none!important}   
+/* sales */
+#slCart input{width:110px;padding:6px 8px}
+#slCart input.c_q{width:80px}
+.tot{grid-column:1/-1;display:grid;gap:4px;border-top:1px solid var(--line);padding-top:12px;max-width:360px}
+.tot div{display:flex;justify-content:space-between;gap:12px}
+.tot .gt{font:700 22px var(--serif);color:var(--navy);padding-top:6px;border-top:1px solid var(--line)}
+#slStats{margin:12px 0 16px}
+/* POS-style sales screen */
+.pos{display:grid;grid-template-columns:280px minmax(240px,1fr) minmax(380px,1.4fr);gap:16px;align-items:start;margin-bottom:18px}
+.pos>.card{margin:0;display:grid;gap:12px;align-content:start}
+.pos>.card>h4{margin:0;padding:0;border:0;font:500 12px var(--mono);letter-spacing:.08em;color:#4a3a8a}
+.pos-list input{width:100%}
+.pos-items{max-height:560px;overflow-y:auto;border:1px solid var(--line)}
+.pos-items button{display:block;width:100%;text-align:left;background:#fff;border:0;border-bottom:1px solid var(--line);padding:9px 10px;font:600 13px Inter;color:var(--ink);cursor:pointer}
+.pos-items button small{display:block;font-weight:400;font-size:11px;color:var(--mute)}
+.pos-items button:hover{background:#f3f4f8}
+.pos-items button.on{background:var(--navy);color:#fff}.pos-items button.on small{color:#d9dcff}
+.pos-items button.out{opacity:.55}
+.pos-sel{min-height:84px;display:grid;align-content:center;padding:12px;background:#fafbff;border:1px dashed var(--line);border-radius:4px}
+.pos-sel b{font:700 17px var(--serif);color:var(--navy)}.pos-sel small{color:var(--mute)}
+.pos-rc .tbl{border:1px solid var(--line);max-height:300px;overflow:auto}
+#slCart td:first-child{white-space:normal}
+#slCart input.c_q{width:64px}#slCart input{width:88px}
+.pos-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:12px}
+#slCheck .row{margin-top:12px}
+@media(max-width:1100px){.pos{grid-template-columns:1fr}.pos-items{max-height:260px}}
+/* offline pill */
+.net{align-self:center;padding:5px 12px;border-radius:99px;font:600 12px Inter}
+.net.off{background:#FEF0C7;color:var(--amber)}.net.sync{background:#D1FADF;color:var(--green)}
+/* v3: full-width sales, held sales, receipt template */
+div.pos{color:var(--ink)}
+@media(min-width:1101px){
+  main.full{max-width:none;padding:18px 22px}
+  main.full .pos{grid-template-columns:minmax(260px,320px) minmax(260px,340px) minmax(0,1fr)}
+  main.full .pos-items{max-height:calc(100vh - 250px)}
+  main.full .pos-rc .tbl{max-height:calc(100vh - 560px);min-height:150px}
+}
+#slHeld{padding:14px 16px}
+#slHeld h4{margin:0 0 10px;padding:0;border:0;font:500 12px var(--mono);letter-spacing:.08em;color:#4a3a8a}
+.held{display:flex;gap:10px;flex-wrap:wrap}
+.hld{display:flex;align-items:center;gap:14px;justify-content:space-between;border:1px solid var(--line);border-left:3px solid var(--pink);border-radius:4px;padding:8px 12px;background:#fafbff}
+.hld small{display:block;color:var(--mute);font-size:12px}
+.chks{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px 20px}
+.chks label{display:flex;align-items:center;gap:6px;font-weight:400}
+.chks input{width:auto;min-height:0;padding:0}
+.rcprev{grid-column:1/-1;display:grid;gap:6px}
+.rcprev iframe{width:100%;height:440px;border:1px solid var(--line);background:#fff}

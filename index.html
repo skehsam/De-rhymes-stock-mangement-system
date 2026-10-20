@@ -28,6 +28,7 @@
     <nav>
       <div class="grp">Daily use</div>
       <button data-v="dashboard">Dashboard</button>
+      <button data-v="sales">Sales</button>
       <button data-v="stockin">Receive stock</button>
       <button data-v="stockout">Stock out</button>
       <button data-v="products">Products<span class="badge bad" id="bLow" hidden></span></button>
@@ -47,6 +48,7 @@
     <header>
       <button id="menu" aria-label="Toggle menu">☰</button>
       <div class="ttl"><h2 id="title"></h2><p id="sub"></p></div>
+      <span id="net" class="net" hidden></span>
       <div class="actions">
         <button class="btn" data-go="stockin">+ Stock in</button>
       </div>
@@ -77,8 +79,14 @@
         <label>Base unit (smallest unit you sell)<input id="p_unit" placeholder="piece, bottle, kg" required></label>
         <label id="p_cost_l" hidden>Cost price per base unit (₦)<input id="p_cost" type="number" min="0" step="0.01"></label>
 
+        <div class="sub" id="priceBox">
+          <h3>Selling prices <small>(type them in yourself, or leave empty and set them later in the Pricing calculator)</small></h3>
+          <label>Retail price per base unit (₦)<input id="p_price" type="number" min="0" step="0.01"></label>
+          <label>Wholesale price per base unit (₦)<input id="p_wprice" type="number" min="0" step="0.01"></label>
+        </div>
+
         <div class="sub" id="packBox">
-          <h3>Packs <small>(optional. Name each pack and say how many base units it holds, e.g. Pack = 4, Roll = 10, Carton = 120)</small></h3>
+          <h3>Packs <small>(optional. Name each pack and say how many base units it holds, e.g. Pack = 4, Roll = 10, Carton = 120. You can type a retail and wholesale price for each pack. If left empty, base price × pack size is used when selling)</small></h3>
           <div id="packRows"></div>
           <div><button type="button" id="addPack" class="btn ghost sm">+ Add pack</button></div>
         </div>
@@ -109,6 +117,47 @@
         <label>Notes<input id="in_n"></label>
         <div class="row"><button class="btn">Receive stock</button></div>
       </form>
+    </section>
+
+    <section id="sales">
+      <div id="slHeld" class="card" hidden></div>
+      <div class="pos">
+        <div class="card pos-list">
+          <h4>PRODUCTS</h4>
+          <input id="sl_s" type="search" placeholder="Search name, SKU or barcode. Press Enter to scan" autocomplete="off">
+          <div id="sl_list" class="pos-items"></div>
+        </div>
+        <form id="slForm" class="card pos-mid">
+          <h4>INPUT SALES</h4>
+          <input type="hidden" id="sl_p">
+          <div id="sl_card" class="pos-sel"><p class="empty">Select an item to be purchased from the list on your left side</p></div>
+          <label>Sell by<select id="sl_u"></select></label>
+          <label>Price type<select id="sl_t"><option value="retail">Retail</option><option value="wholesale">Wholesale</option></select></label>
+          <label>Quantity<input id="sl_q" type="number" min="0" step="any" value="1" required></label>
+          <label>Price per unit (₦) <small>edit to set your own price</small><input id="sl_pr" type="number" min="0" step="0.01" required></label>
+          <small class="hint" id="sl_i"></small>
+          <button class="btn">Add to receipt</button>
+        </form>
+        <div class="card pos-rc">
+          <h4>RECEIPT</h4>
+          <div id="slCart" class="tbl"></div>
+          <form id="slCheck">
+            <div class="pos-grid">
+              <label>Customer <small>optional</small><input id="sl_cu" placeholder="Click to add customer"></label>
+              <label>Payment method<select id="sl_pay"><option>Cash</option><option>Transfer</option><option>POS</option><option>Credit (pay later)</option></select></label>
+              <label>Discount type<select id="sl_dt"><option value="amt">Amount (₦)</option><option value="pct">Percentage (%)</option></select></label>
+              <label>Discount<input id="sl_dv" type="number" min="0" step="0.01" value="0"></label>
+              <label>Tendering (₦)<input id="sl_td" type="number" min="0" step="0.01"></label>
+              <label>Note <small>optional</small><input id="sl_n"></label>
+            </div>
+            <div id="slTot" class="tot"></div>
+            <div class="row"><button type="button" id="slClear" class="btn ghost">Clear</button><button type="button" id="slHold" class="btn ghost" disabled>Hold sale</button><button class="btn" id="slDone">Complete sale</button></div>
+          </form>
+        </div>
+      </div>
+      <h3 id="slH">Today's sales</h3>
+      <div id="slStats" class="stats"></div>
+      <div id="slList" class="card tbl"></div>
     </section>
 
     <section id="stockout">
@@ -155,6 +204,26 @@
     <section id="expiry"></section>
 
     <section id="settings">
+      <form id="rcForm" class="card grid">
+        <h3 style="grid-column:1/-1">Receipt template <small>(controls what customers see on printed receipts)</small></h3>
+        <label>Business name<input id="rc_name" required></label>
+        <label>Address<input id="rc_addr"></label>
+        <label>Phone<input id="rc_phone"></label>
+        <label>Extra header line <small>e.g. slogan or TIN</small><input id="rc_head"></label>
+        <label>Footer message<input id="rc_foot"></label>
+        <label>Paper width<select id="rc_w"><option value="58">58 mm roll</option><option value="80">80 mm roll</option><option value="a4">A4 / full page</option></select></label>
+        <label>Text size<select id="rc_s"><option value="11">Small</option><option value="13">Normal</option><option value="15">Large</option></select></label>
+        <div class="chks">
+          <label><input type="checkbox" id="rc_no"> Receipt number</label>
+          <label><input type="checkbox" id="rc_date"> Date and time</label>
+          <label><input type="checkbox" id="rc_cu"> Customer name</label>
+          <label><input type="checkbox" id="rc_pay"> Payment method</label>
+          <label><input type="checkbox" id="rc_by"> Served by</label>
+          <label><input type="checkbox" id="rc_note"> Sale note</label>
+        </div>
+        <div class="row"><button class="btn" id="rcSave">Save receipt template</button><button type="button" id="rcDef" class="btn ghost">Reset to default</button></div>
+        <div class="rcprev"><small class="hint">Live preview (sample data)</small><iframe id="rcPrev" title="Receipt preview"></iframe></div>
+      </form>
       <form id="csForm" class="card grid">
         <input type="hidden" id="cs_id">
         <label>Category name<input id="cs_name" required></label>
