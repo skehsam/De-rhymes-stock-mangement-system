@@ -51,7 +51,7 @@ onAuthStateChanged(auth,async u=>{user=u;$("login").hidden=!!u;$("app").hidden=!
       document.body.classList.toggle("staff",!isAdmin());
       document.body.classList.toggle("nosa",!isSuper());
       document.body.classList.toggle("super",isSuper());
-      await load();show("dashboard")}
+      await Promise.all([load(),rcLoad()]);show("dashboard")}
     catch(e){console.error(e);toast("Could not load data. Check your Firebase rules and config.",true)}}});
 
 // ---- helpers: packs, categories, expiry windows
@@ -452,6 +452,7 @@ const ruleText=c=>{const e=v=>v===""||v==null;
   return [...(c.rules||[]).map(r=>`cost ${r.op} ${Number(r.value).toLocaleString("en-NG")} → retail ${r.markup}%${e(r.wholesale)?"":`, wholesale ${r.wholesale}%`}`),
   e(c.defaultMarkup)&&e(c.defaultWholesale)?"":`otherwise retail ${e(c.defaultMarkup)?"none":c.defaultMarkup+"%"}, wholesale ${e(c.defaultWholesale)?"none":c.defaultWholesale+"%"}`].filter(Boolean).join("; ")||"No rules"};
 function settingsView(){
+  rcFill(RC);
   $("csList").innerHTML=C.length?"<table><tr><th>Category</th><th>Markup rules</th><th>Minimum stock</th><th>Expiry reminder</th><th>Products</th><th></th></tr>"+C.map(c=>`<tr><td>${esc(c.name)}</td><td style="white-space:normal">${esc(ruleText(c))}</td><td>${c.minStock===""||c.minStock==null?"Not set":c.minStock}</td><td>${c.expiryMonths} mo before</td><td>${P.filter(p=>p.category===c.name).length}</td>
     <td><button class="btn sm ghost" data-ce="${c.id}">Edit</button> <button class="btn sm ghost" data-cd="${c.id}">Delete</button></td></tr>`).join("")+"</table>":'<p class="empty">No categories yet. Add your first one above.</p>';
   $("csList").querySelectorAll("[data-ce]").forEach(b=>b.onclick=()=>{const c=C.find(x=>x.id===b.dataset.ce);
@@ -646,13 +647,34 @@ $("slCheck").onsubmit=e=>{e.preventDefault();guard($("slDone"),async()=>{
   toast(`Sale ${receiptNo} recorded: ${naira(sale.total)}`);
   try{printReceipt({...sale,at:new Date()})}catch(err){console.error(err)}})};
 
-function printReceipt(s){
-  const d=s.at?.toDate?s.at.toDate():s.at;
-  const html=`<!doctype html><meta charset="utf-8"><title>${esc(s.receiptNo)}</title><style>body{font:13px/1.45 ui-monospace,monospace;max-width:300px;margin:12px auto;color:#000}h2{text-align:center;margin:0 0 2px}p{margin:2px 0;text-align:center}table{width:100%;border-collapse:collapse;margin:10px 0}td{padding:3px 0;vertical-align:top}td:last-child{text-align:right;white-space:nowrap}hr{border:0;border-top:1px dashed #000}.t td{font-weight:700;font-size:15px}</style>
-  <h2>De Rhymes</h2><p>${esc(s.receiptNo)}</p><p>${d?d.toLocaleString("en-NG"):""}</p>${s.customer?`<p>Customer: ${esc(s.customer)}</p>`:""}<hr>
+// ---- receipt template (stored in settings/receipt)
+const RC_DEF={name:"De Rhymes",addr:"",phone:"",head:"",foot:"Thank you for your purchase.",w:"80",s:"13",no:true,date:true,cu:true,pay:true,by:true,note:true};
+let RC={...RC_DEF};
+async function rcLoad(){try{const s=await getDoc(doc(db,"settings","receipt"));RC={...RC_DEF,...(s.exists()?s.data():{})}}catch(e){console.error(e)}}
+const RC_TXT={name:"rc_name",addr:"rc_addr",phone:"rc_phone",head:"rc_head",foot:"rc_foot",w:"rc_w",s:"rc_s"};
+const RC_CHK={no:"rc_no",date:"rc_date",cu:"rc_cu",pay:"rc_pay",by:"rc_by",note:"rc_note"};
+function rcFill(c){for(const k in RC_TXT)$(RC_TXT[k]).value=c[k]??"";for(const k in RC_CHK)$(RC_CHK[k]).checked=!!c[k];rcPreview()}
+function rcRead(){const c={};for(const k in RC_TXT)c[k]=$(RC_TXT[k]).value.trim();for(const k in RC_CHK)c[k]=$(RC_CHK[k]).checked;return c}
+function rcHtml(s,c=RC){
+  const d=s.at?.toDate?s.at.toDate():s.at,mw=c.w==="a4"?"190mm":c.w+"mm";
+  return `<!doctype html><meta charset="utf-8"><title>${esc(s.receiptNo)}</title><style>body{font:${c.s}px/1.45 ui-monospace,monospace;max-width:${mw};margin:12px auto;color:#000}h2{text-align:center;margin:0 0 2px}p{margin:2px 0;text-align:center}table{width:100%;border-collapse:collapse;margin:10px 0}td{padding:3px 0;vertical-align:top}td:last-child{text-align:right;white-space:nowrap}hr{border:0;border-top:1px dashed #000}.t td{font-weight:700;font-size:1.15em}</style>
+  <h2>${esc(c.name)}</h2>${c.addr?`<p>${esc(c.addr)}</p>`:""}${c.phone?`<p>${esc(c.phone)}</p>`:""}${c.head?`<p>${esc(c.head)}</p>`:""}
+  ${c.no?`<p>${esc(s.receiptNo)}</p>`:""}${c.date&&d?`<p>${d.toLocaleString("en-NG")}</p>`:""}${c.cu&&s.customer?`<p>Customer: ${esc(s.customer)}</p>`:""}<hr>
   <table>${s.items.map(i=>`<tr><td>${esc(i.name)}<br>${i.qty} ${esc(i.packName)} × ${naira(i.unitPrice)}</td><td>${naira(i.lineTotal)}</td></tr>`).join("")}</table><hr>
-  <table><tr><td>Subtotal</td><td>${naira(s.subtotal)}</td></tr>${s.discount?`<tr><td>Discount${s.discountType==="percent"?` (${s.discountValue}%)`:""}</td><td>− ${naira(s.discount)}</td></tr>`:""}<tr class="t"><td>Total</td><td>${naira(s.total)}</td></tr><tr><td>Paid by</td><td>${esc(s.payment)}</td></tr></table>
-  <hr><p>Served by ${esc(s.by)}</p><p>Thank you for your purchase.</p>`;
+  <table><tr><td>Subtotal</td><td>${naira(s.subtotal)}</td></tr>${s.discount?`<tr><td>Discount${s.discountType==="percent"?` (${s.discountValue}%)`:""}</td><td>− ${naira(s.discount)}</td></tr>`:""}<tr class="t"><td>Total</td><td>${naira(s.total)}</td></tr>${c.pay?`<tr><td>Paid by</td><td>${esc(s.payment)}</td></tr>`:""}</table>
+  <hr>${c.by?`<p>Served by ${esc(s.by)}</p>`:""}${c.note&&s.note?`<p>Note: ${esc(s.note)}</p>`:""}${c.foot?`<p>${esc(c.foot)}</p>`:""}`}
+const RC_SAMPLE={receiptNo:"S20260101-ABCD",at:new Date(),customer:"Sample Customer",payment:"Cash",by:"staff",note:"Sample note",subtotal:3500,discount:500,discountType:"amount",discountValue:500,total:3000,
+  items:[{name:"Sample product",packName:"Piece",qty:2,unitPrice:1000,lineTotal:2000},{name:"Another item",packName:"Pack",qty:1,unitPrice:1500,lineTotal:1500}]};
+function rcPreview(){$("rcPrev").srcdoc=rcHtml(RC_SAMPLE,rcRead())}
+$("rcForm").addEventListener("input",rcPreview);
+$("rcDef").onclick=()=>rcFill(RC_DEF);
+$("rcForm").onsubmit=e=>{e.preventDefault();guard($("rcSave"),async()=>{
+  const c=rcRead();if(!c.name)throw new Error("Enter a business name.");
+  await runTx(async t=>t.set(doc(db,"settings","receipt"),{...c,updatedAt:serverTimestamp()}));
+  RC=c;toast("Receipt template saved")})};
+
+function printReceipt(s){
+  const html=rcHtml(s,RC);
   $("rcFrame")?.remove();
   const f=document.createElement("iframe");f.id="rcFrame";
   f.style.cssText="position:fixed;right:0;bottom:0;width:0;height:0;border:0";
