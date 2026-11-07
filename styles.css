@@ -208,3 +208,29 @@ div.pos{color:var(--ink)}
 .chks input{width:auto;min-height:0;padding:0}
 .rcprev{grid-column:1/-1;display:grid;gap:6px}
 .rcprev iframe{width:100%;height:440px;border:1px solid var(--line);background:#fff}
+/* sales top bar, full screen, receipts and sales report panels */
+.slbar{position:sticky;top:0;z-index:3;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--bg);padding:0 0 12px;margin-bottom:4px}
+.slbar .sp{flex:1}
+.slb{display:inline-flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:4px;padding:9px 14px;font:600 13px Inter;color:var(--ink);cursor:pointer}
+.slb:hover{background:#f3f4f8}
+.slb.on{background:var(--navy);border-color:var(--navy);color:#fff}
+body.fs aside,body.fs header,body.fs #scrim{display:none!important}
+body.fs main{padding:12px 16px}
+.svf{margin-bottom:12px}
+.hint.sv{margin:0 0 10px}
+.pmx{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px}
+.pmx button{text-align:left;background:#fff;border:1px solid var(--line);border-left:3px solid var(--pink);border-radius:3px;padding:12px 14px;cursor:pointer;font:inherit;color:var(--ink)}
+.pmx button:hover{background:#fafbff}
+.pmx button.on{box-shadow:inset 0 0 0 1px var(--pink)}
+.pmx small{display:block;color:var(--mute);font-size:12px}
+.pmx b{display:block;font:700 20px var(--serif);color:var(--navy);margin:2px 0}
+.svt td.it{white-space:normal;min-width:220px}
+.svt td.it small{display:block;color:var(--mute)}
+@media(max-width:800px){.slb{min-height:44px}#slFsT{display:none}}
+/* settings accordion */
+.acc{display:grid;gap:10px;margin-bottom:16px}
+.accbtn{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;background:#fff;border:1px solid var(--line);border-radius:4px;padding:14px 18px;font:600 15px Inter;color:var(--navy);cursor:pointer;text-align:left}
+.accbtn small{display:block;margin-top:2px;font-weight:400;font-size:12px;color:var(--mute)}
+.accbtn i{font:700 20px/1 Inter;font-style:normal;color:var(--pink)}
+.accbtn:hover{background:#f3f4f8}
+.accbtn.on{border-color:var(--pink);box-shadow:inset 0 0 0 1px var(--pink)}

@@ -99,6 +99,7 @@ function show(v){
   if(v==="settings"&&!isAdmin()){toast("Only admins can open Settings.",true);v="dashboard"}
   if(v==="staff"&&!isSuper()){toast("Only the superadmin can open Staff accounts.",true);v="dashboard"}
   if(v==="transactions"&&!isSuper()){toast("Only the superadmin can open Transactions.",true);v="dashboard"}
+  if(v!=="sales")slFsOff();
   document.querySelectorAll("main>section").forEach(s=>s.classList.toggle("on",s.id===v));
   document.querySelectorAll("aside nav button").forEach(b=>b.classList.toggle("on",b.dataset.v===(v==="product"?"products":v)));
   $("title").textContent=titles[v];$("sub").textContent=subs[v];$("side").classList.remove("open");
@@ -451,13 +452,20 @@ $("csRules").addEventListener("click",e=>{if(e.target.closest(".r_x"))e.target.c
 const ruleText=c=>{const e=v=>v===""||v==null;
   return [...(c.rules||[]).map(r=>`cost ${r.op} ${Number(r.value).toLocaleString("en-NG")} → retail ${r.markup}%${e(r.wholesale)?"":`, wholesale ${r.wholesale}%`}`),
   e(c.defaultMarkup)&&e(c.defaultWholesale)?"":`otherwise retail ${e(c.defaultMarkup)?"none":c.defaultMarkup+"%"}, wholesale ${e(c.defaultWholesale)?"none":c.defaultWholesale+"%"}`].filter(Boolean).join("; ")||"No rules"};
+// ---- settings accordion: both sections start closed, clicking one opens it (and closes the other)
+const ACC={rc:["rcForm"],cs:["csForm","csList"]};
+function setAcc(k){
+  document.querySelectorAll(".accbtn").forEach(b=>{const on=b.dataset.a===k;b.classList.toggle("on",on);b.setAttribute("aria-expanded",on);b.querySelector("i").textContent=on?"−":"+"});
+  for(const x in ACC)ACC[x].forEach(id=>$(id).hidden=x!==k);
+  if(k==="rc")rcPreview()}
+document.querySelectorAll(".accbtn").forEach(b=>b.onclick=()=>setAcc(b.getAttribute("aria-expanded")==="true"?"":b.dataset.a));
 function settingsView(){
   rcFill(RC);
   $("csList").innerHTML=C.length?"<table><tr><th>Category</th><th>Markup rules</th><th>Minimum stock</th><th>Expiry reminder</th><th>Products</th><th></th></tr>"+C.map(c=>`<tr><td>${esc(c.name)}</td><td style="white-space:normal">${esc(ruleText(c))}</td><td>${c.minStock===""||c.minStock==null?"Not set":c.minStock}</td><td>${c.expiryMonths} mo before</td><td>${P.filter(p=>p.category===c.name).length}</td>
     <td><button class="btn sm ghost" data-ce="${c.id}">Edit</button> <button class="btn sm ghost" data-cd="${c.id}">Delete</button></td></tr>`).join("")+"</table>":'<p class="empty">No categories yet. Add your first one above.</p>';
   $("csList").querySelectorAll("[data-ce]").forEach(b=>b.onclick=()=>{const c=C.find(x=>x.id===b.dataset.ce);
     $("csForm").reset();$("csRules").innerHTML="";$("cs_id").value=c.id;$("cs_name").value=c.name;$("cs_def").value=c.defaultMarkup??"";$("cs_dw").value=c.defaultWholesale??"";$("cs_exp").value=c.expiryMonths??1;$("cs_min").value=c.minStock??"";
-    (c.rules||[]).forEach(r=>ruleRow(r));scrollTo(0,0)});
+    (c.rules||[]).forEach(r=>ruleRow(r));setAcc("cs");scrollTo(0,0)});
   $("csList").querySelectorAll("[data-cd]").forEach(b=>b.onclick=()=>guard(b,async()=>{
     const c=C.find(x=>x.id===b.dataset.cd);
     if(P.some(p=>p.category===c.name))throw new Error("Products still use this category. Move them first.");
@@ -590,7 +598,7 @@ function slTot(){
   return{sub,disc,total:money(sub-disc)}}
 function slSum(){const T=slTot(),td=num("sl_td");
   $("slTot").innerHTML=`<div><span>Subtotal</span><b>${naira(T.sub)}</b></div><div><span>Discount</span><b>${T.disc?"− "+naira(T.disc):naira(0)}</b></div><div class="gt"><span>Total</span><span>${naira(T.total)}</span></div>${td>0?`<div><span>Tendered</span><b>${naira(td)}</b></div><div><span>Change</span><b>${td>=T.total?naira(money(td-T.total)):"Short by "+naira(money(T.total-td))}</b></div>`:""}`;
-  $("slDone").disabled=!CART.length}
+  $("slDone").disabled=!CART.length;$("slHold").disabled=!CART.length}
 function slCartDraw(){
   $("slCart").innerHTML=(CART.length?`<table><tr><th>Item</th><th>Qty</th><th>Price (₦)</th><th>Total</th><th></th></tr>${CART.map((l,i)=>`<tr data-i="${i}"><td>${esc(l.name)}<small class="hint" style="display:block">${esc(l.pname)}${l.mult>1?` (${l.mult} ${esc(l.unit)})`:""}</small></td><td><input class="c_q" type="number" min="0" step="any" value="${l.q}"></td><td><input class="c_p" type="number" min="0" step="0.01" value="${l.price}"></td><td class="c_t">${naira(slLine(l))}</td><td><button type="button" class="btn sm ghost c_x" aria-label="Remove">×</button></td></tr>`).join("")}</table>`:'<p class="empty">The cart is empty. Search a product above and add it.</p>');
   slSum()}
@@ -600,6 +608,26 @@ $("slCart").addEventListener("input",e=>{const tr=e.target.closest("tr[data-i]")
 $("slCart").addEventListener("click",e=>{const b=e.target.closest(".c_x");if(!b)return;CART.splice(+b.closest("tr").dataset.i,1);slCartDraw()});
 $("slCheck").addEventListener("input",slSum);
 $("slClear").onclick=()=>{if(CART.length&&!confirm("Clear the whole cart?"))return;CART=[];$("slCheck").reset();slCartDraw()};
+
+// ---- held sales (kept on this device, survive a refresh)
+const HELD_KEY="dr_held_v1";
+let HELD=[];try{HELD=JSON.parse(localStorage.getItem(HELD_KEY))||[]}catch{HELD=[]}
+const heldSave=()=>{try{localStorage.setItem(HELD_KEY,JSON.stringify(HELD))}catch{}};
+function heldDraw(){const el=$("slHeld");el.hidden=!HELD.length;if(!HELD.length){el.innerHTML="";return}
+  el.innerHTML=`<h4>HELD SALES (${HELD.length})</h4><div class="held">${HELD.map((h,i)=>{
+    const sub=money(h.cart.reduce((s,l)=>s+l.q*l.price,0));
+    return`<div class="hld"><div><b>${esc(h.customer||"Walk-in customer")}</b><small>${h.cart.length} item(s) · ${naira(sub)} · ${new Date(h.at).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit"})}</small></div><div class="row"><button type="button" class="btn sm" data-hr="${i}">Resume</button><button type="button" class="btn sm ghost" data-hd="${i}">Discard</button></div></div>`}).join("")}</div>`}
+$("slHold").onclick=()=>{
+  if(!CART.length){toast("Add an item before holding a sale.",true);return}
+  HELD.push({at:Date.now(),cart:CART.map(l=>({...l})),customer:$("sl_cu").value.trim(),payment:$("sl_pay").value,dt:$("sl_dt").value,dv:$("sl_dv").value,td:$("sl_td").value,note:$("sl_n").value});
+  heldSave();CART=[];$("slCheck").reset();slCartDraw();heldDraw();toast("Sale held. Resume it from the list above.")};
+$("slHeld").addEventListener("click",e=>{
+  const r=e.target.closest("[data-hr]"),d=e.target.closest("[data-hd]");
+  if(r){if(CART.length){toast("Hold or clear the current sale first.",true);return}
+    const h=HELD.splice(+r.dataset.hr,1)[0];heldSave();CART=h.cart;
+    $("sl_cu").value=h.customer;$("sl_pay").value=h.payment;$("sl_dt").value=h.dt;$("sl_dv").value=h.dv;$("sl_td").value=h.td;$("sl_n").value=h.note;
+    slCartDraw();heldDraw();toast("Sale resumed")}
+  if(d){if(!confirm("Discard this held sale?"))return;HELD.splice(+d.dataset.hd,1);heldSave();heldDraw()}});
 
 const slNo=()=>{const A="ABCDEFGHJKLMNPQRSTUVWXYZ23456789",d=new Date();
   return`S${d.getFullYear()}${pad2(d.getMonth()+1)}${pad2(d.getDate())}-`+Array.from({length:4},()=>A[Math.floor(Math.random()*A.length)]).join("")};
@@ -682,18 +710,90 @@ function printReceipt(s){
   const w=f.contentWindow;w.document.open();w.document.write(html);w.document.close();
   setTimeout(()=>{w.focus();w.print()},300)}
 
-let SL=[];
-async function slToday(){
-  const a=new Date();a.setHours(0,0,0,0);
-  try{const s=await getDocs(query(collection(db,"sales"),where("at",">=",Timestamp.fromDate(a)),orderBy("at","desc")));
-    SL=s.docs.map(d=>({id:d.id,...d.data()}));
-    const rev=money(SL.reduce((x,r)=>x+r.total,0)),dsc=money(SL.reduce((x,r)=>x+(r.discount||0),0)),pr=money(SL.reduce((x,r)=>x+(r.profit||0),0));
-    const st=(l,v,t="b",c="")=>`<div class="stat ${t} ${c}"><small>${l}</small><b>${v}</b><em>&nbsp;</em></div>`;
-    $("slStats").innerHTML=st("Sales today",SL.length,"p")+st("Revenue",naira(rev))+st("Discounts given",naira(dsc))+st("Gross profit",naira(pr),"p","adm");
-    $("slList").innerHTML=SL.length?`<table><tr><th>Time</th><th>Receipt</th><th>Customer</th><th>Items</th><th>Payment</th><th>Discount</th><th>Total</th><th>By</th><th></th></tr>${SL.map((r,i)=>`<tr><td>${r.at?r.at.toDate().toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit"}):""}</td><td>${esc(r.receiptNo)}</td><td>${esc(r.customer||"—")}</td><td>${r.items.map(x=>`${esc(x.name)} ×${x.qty}`).join(", ")}</td><td>${esc(r.payment)}</td><td>${r.discount?naira(r.discount):"—"}</td><td><b>${naira(r.total)}</b></td><td>${esc(r.by)}</td><td><button class="btn sm ghost" data-rc="${i}">Receipt</button></td></tr>`).join("")}</table>`:'<p class="empty">No sales yet today.</p>';
-    $("slList").querySelectorAll("[data-rc]").forEach(b=>b.onclick=()=>printReceipt(SL[+b.dataset.rc]))}
-  catch(e){console.error(e);$("slList").innerHTML='<p class="empty">Could not load today\'s sales. Check that the Firestore rules include the sales collection.</p>'}}
-function salesView(){slListDraw();slCartDraw();slToday();if($("sl_p").value)slFill()}
+// ---- sales top bar: full screen, receipts, sales report
+let slMode="pos";
+const slBarBtns=()=>document.querySelectorAll("#slBar .slb[data-t]");
+function slFsUi(){const on=document.body.classList.contains("fs");$("slFsT").textContent=on?"Exit full screen (Esc)":"Full screen";$("slFs").classList.toggle("on",on)}
+function slFsOn(){document.body.classList.add("fs");document.querySelector("main").classList.add("full");
+  const el=document.documentElement;try{(el.requestFullscreen?.call(el)||Promise.resolve()).catch(()=>{})}catch{}slFsUi()}
+function slFsOff(){if(!document.body.classList.contains("fs"))return;
+  document.body.classList.remove("fs");document.querySelector("main").classList.remove("full");
+  if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});slFsUi()}
+$("slFs").onclick=()=>document.body.classList.contains("fs")?slFsOff():slFsOn();
+document.addEventListener("fullscreenchange",()=>{if(!document.fullscreenElement)slFsOff()});
+document.addEventListener("keydown",e=>{if(e.key==="Escape")slFsOff()});
+slBarBtns().forEach(b=>b.onclick=()=>slTab(b.dataset.t));
+function slTab(t){slMode=t;
+  slBarBtns().forEach(b=>b.classList.toggle("on",b.dataset.t===t));
+  $("slPos").hidden=t!=="pos";$("slRv").hidden=t!=="rv";$("slSr").hidden=t!=="sr";
+  if(t==="rv"||t==="sr"){svBuild(t);svLoad(t)}else $("sl_s").focus()}
+function slToday(){} // today's sales now live in the Sales report panel
+
+const SV_PAYS=["Cash","Transfer","POS","Credit (pay later)"];
+const SV={rv:{el:"slRv",rows:[],shown:[],req:0,built:0},sr:{el:"slSr",rows:[],shown:[],req:0,built:0}};
+const svDraw=k=>k==="rv"?rvDraw():srDraw();
+function svBuild(k){const s=SV[k];if(s.built)return;s.built=1;
+  $(s.el).innerHTML=`<div class="card grid svf">
+    <label>Period<select id="${k}_p"><option value="today">Today</option><option value="yday">Yesterday</option><option value="week">This week</option><option value="month">This month</option><option value="day">Pick a day</option><option value="pweek">Pick a week</option><option value="pmonth">Pick a month</option><option value="range">Custom range</option></select></label>
+    <label id="${k}_dl" hidden>Date<input type="date" id="${k}_d"></label>
+    <label id="${k}_fl" hidden>From<input type="date" id="${k}_f"></label>
+    <label id="${k}_tl" hidden>To<input type="date" id="${k}_t"></label>
+    <label>Payment method<select id="${k}_m"><option value="">All methods</option>${SV_PAYS.map(x=>`<option>${esc(x)}</option>`).join("")}</select></label>
+    <label>Search<input id="${k}_q" type="search" placeholder="Receipt no, customer, item, staff"></label>
+  </div><p class="hint sv" id="${k}_r"></p><div id="${k}_o"></div>`;
+  const dsw=()=>{const p=$(k+"_p").value,one=["day","pweek","pmonth"].includes(p);
+    $(k+"_dl").hidden=!one;$(k+"_fl").hidden=$(k+"_tl").hidden=p!=="range";
+    if(one&&!$(k+"_d").value)$(k+"_d").value=ymd(new Date());
+    if(p==="range"&&!$(k+"_f").value)$(k+"_f").value=$(k+"_t").value=ymd(new Date())};
+  $(k+"_p").onchange=()=>{dsw();svLoad(k)};
+  [k+"_d",k+"_f",k+"_t"].forEach(id=>$(id).onchange=()=>svLoad(k));
+  $(k+"_m").onchange=()=>svDraw(k);$(k+"_q").oninput=()=>svDraw(k);
+  $(k+"_o").onclick=e=>{const b=e.target.closest("[data-rc]");if(b){printReceipt(SV[k].shown[+b.dataset.rc]);return}
+    const p=e.target.closest("[data-pay]");if(p){const m=$(k+"_m");m.value=m.value===p.dataset.pay?"":p.dataset.pay;svDraw(k)}}}
+function svRange(k){
+  const p=$(k+"_p").value,now=new Date(),T=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const add=(d,n)=>new Date(d.getFullYear(),d.getMonth(),d.getDate()+n),wk=d=>add(d,-((d.getDay()+6)%7));
+  const mo=d=>[new Date(d.getFullYear(),d.getMonth(),1),new Date(d.getFullYear(),d.getMonth()+1,1)];
+  if(p==="today")return[T,add(T,1)];
+  if(p==="yday")return[add(T,-1),T];
+  if(p==="week"){const a=wk(T);return[a,add(a,7)]}
+  if(p==="month")return mo(T);
+  if(p==="range"){if(!$(k+"_f").value||!$(k+"_t").value)return null;
+    let a=fromYmd($(k+"_f").value),b=fromYmd($(k+"_t").value);if(b<a){const x=a;a=b;b=x}return[a,add(b,1)]}
+  if(!$(k+"_d").value)return null;const d=fromYmd($(k+"_d").value);
+  if(p==="day")return[d,add(d,1)];if(p==="pweek"){const a=wk(d);return[a,add(a,7)]}return mo(d)}
+async function svLoad(k){
+  const s=SV[k],r=svRange(k),my=++s.req;
+  if(!r){s.rows=[];$(k+"_r").textContent="";$(k+"_o").innerHTML='<p class="empty">Pick a date to see sales.</p>';return}
+  const last=new Date(r[1]-1),f=x=>x.toLocaleDateString("en-NG");
+  $(k+"_r").textContent="Showing "+f(r[0])+(r[0].toDateString()===last.toDateString()?"":" to "+f(last));
+  $(k+"_o").innerHTML='<p class="empty">Loading…</p>';
+  try{const q=await getDocs(query(collection(db,"sales"),where("at",">=",Timestamp.fromDate(r[0])),where("at","<",Timestamp.fromDate(r[1])),orderBy("at","desc")));
+    if(my!==s.req)return;s.rows=q.docs.map(d=>({id:d.id,...d.data()}));svDraw(k)}
+  catch(e){console.error(e);if(my===s.req)$(k+"_o").innerHTML='<p class="empty">Could not load sales. Check your connection and the Firestore rules for the sales collection.</p>'}}
+function svFilter(k,pay=true){
+  const m=pay?$(k+"_m").value:"",q=$(k+"_q").value.trim().toLowerCase();
+  return SV[k].rows.filter(r=>(!m||r.payment===m)&&(!q||[r.receiptNo,r.customer,r.by,r.payment,r.note,...(r.items||[]).map(i=>i.name+" "+(i.sku||""))].join(" ").toLowerCase().includes(q)))}
+const svTime=r=>r.at?.toDate?r.at.toDate().toLocaleString("en-NG",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}):"";
+const svSum=(a,f)=>money(a.reduce((x,r)=>x+(f(r)||0),0));
+const svMAX=300;
+function rvDraw(){
+  const rows=SV.rv.shown=svFilter("rv");
+  $("rv_o").innerHTML=`<p class="hint sv">${rows.length} receipt${rows.length===1?"":"s"}, total ${naira(svSum(rows,r=>r.total))}</p><div class="card tbl">`+(rows.length?`<table class="svt"><tr><th>Date</th><th>Receipt</th><th>Customer</th><th>Items</th><th>Payment</th><th>Total</th><th>By</th><th></th></tr>${rows.slice(0,svMAX).map((r,i)=>`<tr><td>${svTime(r)}</td><td>${esc(r.receiptNo)}</td><td>${esc(r.customer||"—")}</td><td class="it">${(r.items||[]).map(x=>`${esc(x.name)} ×${x.qty}`).join(", ")}</td><td>${esc(r.payment)}</td><td><b>${naira(r.total)}</b></td><td>${esc(r.by)}</td><td><button type="button" class="btn sm ghost" data-rc="${i}">Print</button></td></tr>`).join("")}</table>`+(rows.length>svMAX?`<p class="empty">Showing the first ${svMAX} of ${rows.length}. Narrow the period or search.</p>`:""):'<p class="empty">No receipts found for this period or search.</p>')+"</div>"}
+function srDraw(){
+  const rows=SV.sr.shown=svFilter("sr"),base=svFilter("sr",false),m=$("sr_m").value;
+  const rev=svSum(rows,r=>r.total),n=rows.length;
+  const st=(l,v,t="b",c="")=>`<div class="stat ${t} ${c}"><small>${l}</small><b>${v}</b><em>&nbsp;</em></div>`;
+  const baseRev=svSum(base,r=>r.total),names=[...new Set([...SV_PAYS,...base.map(r=>r.payment).filter(Boolean)])];
+  const pm=names.map(p=>{const a=base.filter(r=>r.payment===p),v=svSum(a,r=>r.total);
+    return`<button type="button" data-pay="${esc(p)}" class="${m===p?"on":""}"><small>${esc(p)}</small><b>${naira(v)}</b><small>${a.length} sale${a.length===1?"":"s"} · ${baseRev?Math.round(v/baseRev*100):0}%</small></button>`}).join("");
+  const staff={};rows.forEach(r=>{const x=staff[r.by||"—"]=staff[r.by||"—"]||{n:0,v:0};x.n++;x.v+=r.total||0});
+  const sl=Object.entries(staff).sort((a,b)=>b[1].v-a[1].v);
+  $("sr_o").innerHTML=`<div class="stats">${st("Transactions",n,"p")}${st("Revenue",naira(rev))}${st("Average sale",naira(n?money(rev/n):0))}${st("Discounts given",naira(svSum(rows,r=>r.discount)))}${st("Gross profit",naira(svSum(rows,r=>r.profit)),"p","adm")}</div>
+  <h3>Revenue by payment method <small class="hint">tap one to filter the list</small></h3><div class="pmx">${pm}</div>
+  ${sl.length?`<div class="panel" style="margin-bottom:16px;min-height:0"><h4>SALES BY STAFF</h4>${sl.map(([u,x])=>`<div class="li"><span>${esc(u)}<small>${x.n} sale${x.n===1?"":"s"}</small></span><b>${naira(money(x.v))}</b></div>`).join("")}</div>`:""}
+  <div class="card tbl">${n?`<table class="svt"><tr><th>Date</th><th>Receipt</th><th>Customer</th><th>Items</th><th>Payment</th><th>Discount</th><th>Total</th><th>By</th><th></th></tr>${rows.slice(0,svMAX).map((r,i)=>`<tr><td>${svTime(r)}</td><td>${esc(r.receiptNo)}</td><td>${esc(r.customer||"—")}</td><td class="it">${(r.items||[]).map(x=>`${esc(x.name)}<small>${x.qty} ${esc(x.packName||"")} × ${naira(x.unitPrice)}</small>`).join("")}</td><td>${esc(r.payment)}</td><td>${r.discount?naira(r.discount):"—"}</td><td><b>${naira(r.total)}</b></td><td>${esc(r.by)}</td><td><button type="button" class="btn sm ghost" data-rc="${i}">Receipt</button></td></tr>`).join("")}</table>`+(n>svMAX?`<p class="empty">Showing the first ${svMAX} of ${n}. Narrow the period or search.</p>`:""):'<p class="empty">No sales found for this period or search.</p>'}</div>`}
+function salesView(){slTab("pos");slListDraw();slCartDraw();heldDraw();if($("sl_p").value)slFill()}
 // ---- staff accounts (superadmin only)
 const normUser=s=>s.trim().toLowerCase();
 const okUser=s=>/^[a-z0-9._-]{3,20}$/.test(s);
@@ -725,17 +825,26 @@ async function staffView(){
 }
 $("stForm").onsubmit=e=>{e.preventDefault();guard($("stSave"),async()=>{
   const name=$("st_name").value.trim(),un=normUser($("st_user").value),em=$("st_email").value.trim().toLowerCase(),pw=$("st_pw").value,rl=$("st_role").value;
+  if(!name)throw new Error("Enter the full name.");
   if(!okUser(un))throw new Error(USER_ERR);
   if(pw.length<6)throw new Error("Password must be at least 6 characters.");
   if((await getDoc(doc(db,"usernames",un))).exists())throw new Error("That username is taken.");
   const synthetic=!em,email=em||`${un}@staff.derhymes.app`;
   let uid;
-  try{uid=(await createUserWithEmailAndPassword(auth2,email,pw)).user.uid}
-  catch(err){throw new Error(err.code==="auth/email-already-in-use"?"That email already has an account.":err.message)}
-  finally{await signOut(auth2).catch(()=>{})}
-  await runTx(async t=>{
-    t.set(doc(db,"users",uid),{name,username:un,email,synthetic,role:rl,active:true,createdAt:serverTimestamp()});
-    t.set(doc(db,"usernames",un),{uid,email})});
+  try{
+    try{uid=(await createUserWithEmailAndPassword(auth2,email,pw)).user.uid}
+    catch(err){
+      if(err.code!=="auth/email-already-in-use")throw new Error(err.code==="auth/weak-password"?"Password is too weak.":err.code==="auth/invalid-email"?"That email is not valid.":(err.message||err.code));
+      // a login left over from an earlier failed attempt: reuse it if the profile was never saved
+      try{uid=(await signInWithEmailAndPassword(auth2,email,pw)).user.uid}
+      catch{throw new Error("That email already has an account.")}
+      if((await getDoc(doc(db,"users",uid))).exists())throw new Error("That email already has an account.")}
+  }finally{await signOut(auth2).catch(()=>{})}
+  try{
+    await runTx(async t=>{
+      t.set(doc(db,"users",uid),{name,username:un,email,synthetic,role:rl,active:true,createdAt:serverTimestamp()});
+      t.set(doc(db,"usernames",un),{uid,email})})}
+  catch(err){console.error(err);throw new Error("The login was created but the profile could not be saved ("+(err.code||err.message)+"). Fix the Firestore rules, then press Create account again with the same details.")}
   $("stForm").reset();await staffView();toast("Account created")})};
 // ---- biometric login (WebAuthn + PRF). The password is stored encrypted on this device only.
 const BIO_KEY="dr_bio_v1",bu8=s=>Uint8Array.from(atob(s.replace(/-/g,"+").replace(/_/g,"/")),c=>c.charCodeAt(0));

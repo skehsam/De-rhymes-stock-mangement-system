@@ -120,6 +120,14 @@
     </section>
 
     <section id="sales">
+      <div id="slBar" class="slbar">
+        <button type="button" id="slFs" class="slb" title="Full screen"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg><span id="slFsT">Full screen</span></button>
+        <span class="sp"></span>
+        <button type="button" class="slb on" data-t="pos" title="New sale"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="20" r="1"/><circle cx="18" cy="20" r="1"/><path d="M2 3h3l3 12h10l3-9H6"/></svg><span>Sell</span></button>
+        <button type="button" class="slb" data-t="rv" title="Receipts"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6"/><rect x="6" y="14" width="12" height="7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/></svg><span>Receipts</span></button>
+        <button type="button" class="slb" data-t="sr" title="Sales report"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15v3M12 10v8M17 6v12"/></svg><span>Sales</span></button>
+      </div>
+      <div id="slPos">
       <div id="slHeld" class="card" hidden></div>
       <div class="pos">
         <div class="card pos-list">
@@ -155,9 +163,9 @@
           </form>
         </div>
       </div>
-      <h3 id="slH">Today's sales</h3>
-      <div id="slStats" class="stats"></div>
-      <div id="slList" class="card tbl"></div>
+      </div>
+      <div id="slRv" hidden></div>
+      <div id="slSr" hidden></div>
     </section>
 
     <section id="stockout">
@@ -204,7 +212,11 @@
     <section id="expiry"></section>
 
     <section id="settings">
-      <form id="rcForm" class="card grid">
+      <div class="acc">
+        <button type="button" class="accbtn" data-a="rc" aria-expanded="false"><span>Receipt printer template<small>Business name, paper width, what shows on receipts</small></span><i>+</i></button>
+        <button type="button" class="accbtn" data-a="cs" aria-expanded="false"><span>Categories<small>Markup rules, minimum stock, expiry reminders</small></span><i>+</i></button>
+      </div>
+      <form id="rcForm" class="card grid" hidden>
         <h3 style="grid-column:1/-1">Receipt template <small>(controls what customers see on printed receipts)</small></h3>
         <label>Business name<input id="rc_name" required></label>
         <label>Address<input id="rc_addr"></label>
@@ -224,7 +236,7 @@
         <div class="row"><button class="btn" id="rcSave">Save receipt template</button><button type="button" id="rcDef" class="btn ghost">Reset to default</button></div>
         <div class="rcprev"><small class="hint">Live preview (sample data)</small><iframe id="rcPrev" title="Receipt preview"></iframe></div>
       </form>
-      <form id="csForm" class="card grid">
+      <form id="csForm" class="card grid" hidden>
         <input type="hidden" id="cs_id">
         <label>Category name<input id="cs_name" required></label>
         <label>Default retail markup (%) <small>used when no rule below matches</small><input id="cs_def" type="number" min="0" step="0.01"></label>
@@ -238,7 +250,7 @@
         </div>
         <div class="row"><button class="btn" id="csSave">Save category</button><button type="button" id="csReset" class="btn ghost">Clear</button></div>
       </form>
-      <div id="csList" class="card tbl"></div>
+      <div id="csList" class="card tbl" hidden></div>
     </section>
 
     <section id="staff">
