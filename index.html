@@ -25,6 +25,7 @@
       <div><b>De Rhymes</b><span>STOCK CONSOLE</span></div>
     </div>
     <button id="newProd" class="newbtn">+ New product</button>
+    <label class="shopsw"><select id="shopSel" aria-label="Shop"></select></label>
     <nav>
       <div class="grp">Daily use</div>
       <button data-v="dashboard">Dashboard</button>
@@ -38,6 +39,7 @@
       <button data-v="expiry">Batches &amp; expiry<span class="badge bad" id="bExp" hidden></span></button>
       <div class="grp">Tools</div>
       <button data-v="pricing">Pricing calculator</button>
+      <button data-v="analytics" class="adm">Analytics</button>
       <button data-v="settings" class="adm">Settings</button>
       <button data-v="staff" class="sup">Staff accounts</button>
     </nav>
@@ -126,6 +128,7 @@
         <button type="button" class="slb on" data-t="pos" title="New sale"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="20" r="1"/><circle cx="18" cy="20" r="1"/><path d="M2 3h3l3 12h10l3-9H6"/></svg><span>Sell</span></button>
         <button type="button" class="slb" data-t="rv" title="Receipts"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6"/><rect x="6" y="14" width="12" height="7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/></svg><span>Receipts</span></button>
         <button type="button" class="slb" data-t="sr" title="Sales report"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15v3M12 10v8M17 6v12"/></svg><span>Sales</span></button>
+        <button type="button" class="slb adm" data-t="rf" title="Returns and refunds"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></svg><span>Returns</span></button>
       </div>
       <div id="slPos">
       <div id="slHeld" class="card" hidden></div>
@@ -152,10 +155,10 @@
           <form id="slCheck">
             <div class="pos-grid">
               <label>Customer <small>optional</small><input id="sl_cu" placeholder="Click to add customer"></label>
-              <label>Payment method<select id="sl_pay"><option>Cash</option><option>Transfer</option><option>POS</option><option>Credit (pay later)</option></select></label>
+              <div class="pays"><small>Payment <span class="hint">use Split payment when the customer pays with more than one method</span></small><div id="slPays"></div><button type="button" id="slAddPay" class="btn ghost sm">+ Split payment</button></div>
               <label>Discount type<select id="sl_dt"><option value="amt">Amount (₦)</option><option value="pct">Percentage (%)</option></select></label>
               <label>Discount<input id="sl_dv" type="number" min="0" step="0.01" value="0"></label>
-              <label>Tendering (₦)<input id="sl_td" type="number" min="0" step="0.01"></label>
+              
               <label>Note <small>optional</small><input id="sl_n"></label>
             </div>
             <div id="slTot" class="tot"></div>
@@ -166,6 +169,7 @@
       </div>
       <div id="slRv" hidden></div>
       <div id="slSr" hidden></div>
+      <div id="slRf" hidden></div>
     </section>
 
     <section id="stockout">
@@ -209,15 +213,21 @@
       <div id="prOut" class="card"></div>
     </section>
 
+    <section id="analytics"></section>
+
     <section id="expiry"></section>
 
     <section id="settings">
-      <div class="acc">
-        <button type="button" class="accbtn" data-a="rc" aria-expanded="false"><span>Receipt printer template<small>Business name, paper width, what shows on receipts</small></span><i>+</i></button>
-        <button type="button" class="accbtn" data-a="cs" aria-expanded="false"><span>Categories<small>Markup rules, minimum stock, expiry reminders</small></span><i>+</i></button>
-      </div>
-      <form id="rcForm" class="card grid" hidden>
+      <form id="shForm" class="card grid">
+        <input type="hidden" id="sh_id">
+        <label>Shop / checkpoint name<input id="sh_name" required placeholder="e.g. Cosmetics Shop"></label>
+        <div class="sub"><h3>Categories in this shop <small>(only ticked categories show in this shop's products, stock and sales. The same category can be ticked in more than one shop)</small></h3><div id="shCatList" class="chks"></div></div>
+        <div class="row"><button class="btn" id="shSave">Save shop</button><button type="button" id="shReset" class="btn ghost">Clear</button></div>
+      </form>
+      <div id="shList" class="card tbl"></div>
+      <form id="rcForm" class="card grid">
         <h3 style="grid-column:1/-1">Receipt template <small>(controls what customers see on printed receipts)</small></h3>
+        <label style="grid-column:1/-1">Template for<select id="rc_shop"></select></label>
         <label>Business name<input id="rc_name" required></label>
         <label>Address<input id="rc_addr"></label>
         <label>Phone<input id="rc_phone"></label>
@@ -233,12 +243,13 @@
           <label><input type="checkbox" id="rc_by"> Served by</label>
           <label><input type="checkbox" id="rc_note"> Sale note</label>
         </div>
-        <div class="row"><button class="btn" id="rcSave">Save receipt template</button><button type="button" id="rcDef" class="btn ghost">Reset to default</button></div>
+        <div class="row"><button class="btn" id="rcSave">Save receipt template</button><button type="button" id="rcDef" class="btn ghost">Reset to default</button><button type="button" id="rcDel" class="btn ghost" hidden>Remove this shop's template</button></div>
         <div class="rcprev"><small class="hint">Live preview (sample data)</small><iframe id="rcPrev" title="Receipt preview"></iframe></div>
       </form>
-      <form id="csForm" class="card grid" hidden>
+      <form id="csForm" class="card grid">
         <input type="hidden" id="cs_id">
         <label>Category name<input id="cs_name" required></label>
+        <div style="grid-column:1/-1;display:grid;gap:6px"><span style="font-weight:500;font-size:13px">Shops <small style="font-weight:400;color:var(--mute)">tick every shop that sells this category</small></span><div id="cs_shops" class="chks"></div></div>
         <label>Default retail markup (%) <small>used when no rule below matches</small><input id="cs_def" type="number" min="0" step="0.01"></label>
         <label>Default wholesale markup (%) <small>used when no rule below matches</small><input id="cs_dw" type="number" min="0" step="0.01"></label>
         <label>Minimum stock <small>low-stock alert starts at this level, counted in each product's base unit</small><input id="cs_min" type="number" min="0" step="any" placeholder="e.g. 10"></label>
@@ -250,7 +261,7 @@
         </div>
         <div class="row"><button class="btn" id="csSave">Save category</button><button type="button" id="csReset" class="btn ghost">Clear</button></div>
       </form>
-      <div id="csList" class="card tbl" hidden></div>
+      <div id="csList" class="card tbl"></div>
     </section>
 
     <section id="staff">
@@ -258,9 +269,10 @@
         <label>Full name<input id="st_name" required></label>
         <label>Username<input id="st_user" required autocapitalize="none" placeholder="e.g. amaka"></label>
         <label>Email <small>optional, leave empty if they have none</small><input id="st_email" type="email"></label>
-        <label>Password<input id="st_pw" type="text" minlength="6" required autocomplete="off"></label>
+        <input type="hidden" id="st_id"><label id="st_pwl">Password<input id="st_pw" type="text" minlength="6" required autocomplete="off"></label>
         <label>Role<select id="st_role"><option value="staff">Staff</option><option value="admin">Admin</option></select></label>
-        <div class="row"><button class="btn" id="stSave">Create account</button></div>
+        <div class="sub" id="stAccess"><h3>Shop access <small>(this person only sees and sells in the ticked shops. Admins always see every shop)</small></h3><div class="chks"><label><input type="checkbox" id="st_all"> All shops</label></div><div id="stShops" class="chks"></div></div>
+        <div class="row"><button class="btn" id="stSave">Create account</button><button type="button" id="stCancel" class="btn ghost" hidden>Cancel</button></div>
       </form>
       <div id="stList" class="card tbl"></div>
     </section>

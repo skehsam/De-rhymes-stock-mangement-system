@@ -20,11 +20,19 @@ async function runTx(fn){
   wb.commit().catch(e=>{console.error(e);toast("An offline change was rejected by the server: "+(e.message||e.code),true)});
   netUi();return out}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
-let P=[],B=[],C=[],cur=null,user=null,role="staff",sort={k:"name",d:1},pf="all";
+let P=[],PA=[],B=[],C=[],cur=null,user=null,role="staff",sort={k:"name",d:1},pf="all";
+let SH=[],shop=localStorage.getItem("dr_shop")||"",ACC={all:true,shops:[]};
+const shopIdsOf=c=>Array.isArray(c?.shopIds)?c.shopIds:(c?.shopId?[c.shopId]:[]);
+const inShop=(c,id)=>shopIdsOf(c).includes(id);
 const isAdmin=()=>["admin","superadmin"].includes(role);
 const isSuper=()=>role==="superadmin";
-const titles={dashboard:"Dashboard",products:"Products",stockin:"Receive stock",stockout:"Stock out",movements:"Movements",pricing:"Pricing calculator",expiry:"Batches and expiry",settings:"Settings",product:"Product details",transactions:"Transactions",staff:"Staff accounts",sales:"Sales"};
-const subs={dashboard:"Today's stock position at a glance.",products:"Search, edit and archive the products you sell.",stockin:"Add a new product, or receive a new batch of an existing one.",stockout:"Record sales, damages, losses and corrections.",movements:"Every stock change, newest first.",pricing:"Work out selling prices from cost, markup, margin or category rules.",expiry:"Track batches and what is close to expiring.",settings:"Categories, markup rules and expiry reminders.",product:"Everything about this product in one place.",transactions:"Search any day, week or month and export it as a CSV file.",staff:"Create and manage staff logins.",sales:"Sell products, set prices and discounts. Stock is deducted automatically."};
+// shops this login may open: admins see all; staff only the shops ticked on their account (accounts made before shop access existed keep all shops until edited)
+const allowedShops=()=>isAdmin()||ACC.all?SH:SH.filter(s=>ACC.shops.includes(s.id));
+// does a record of this shop belong in the current view? With no shop picked only admins (or a system with no shops) see everything
+const inScope=sid=>shop?sid===shop:(isAdmin()||!SH.length);
+const rfScope=x=>shop?(x.shopId?x.shopId===shop:(x.items||[]).some(i=>prodOf(i.productId))):(isAdmin()||!SH.length);
+const titles={dashboard:"Dashboard",products:"Products",stockin:"Receive stock",stockout:"Stock out",movements:"Movements",pricing:"Pricing calculator",expiry:"Batches and expiry",settings:"Settings",product:"Product details",transactions:"Transactions",staff:"Staff accounts",sales:"Sales",analytics:"Analytics"};
+const subs={dashboard:"Today's stock position at a glance.",products:"Search, edit and archive the products you sell.",stockin:"Add a new product, or receive a new batch of an existing one.",stockout:"Record sales, damages, losses and corrections.",movements:"Every stock change, newest first.",pricing:"Work out selling prices from cost, markup, margin or category rules.",expiry:"Track batches and what is close to expiring.",settings:"Categories, markup rules and expiry reminders.",product:"Everything about this product in one place.",transactions:"Search any day, week or month and export it as a CSV file.",staff:"Create and manage staff logins.",sales:"Sell products, set prices and discounts. Stock is deducted automatically.",analytics:"How fast products sell, what earns the most, and where you lose money."};
 
 function toast(m,bad){const t=$("toast");t.textContent=m;t.className="show"+(bad?" bad":"");setTimeout(()=>t.className="",bad?5000:3000)}
 document.addEventListener("click",async e=>{const b=e.target.closest(".cpy");if(!b)return;e.preventDefault();e.stopPropagation();
@@ -47,7 +55,7 @@ onAuthStateChanged(auth,async u=>{user=u;$("login").hidden=!!u;$("app").hidden=!
   if(u){$("meName").textContent=u.email;
     try{const r=await getDoc(doc(db,"users",u.uid)),d=r.exists()?r.data():{};
       if(d.active===false){$("loginErr").textContent="This account has been deactivated.";await signOut(auth);return}
-      role=d.role||"staff";$("meName").textContent=d.name||d.username||u.email;
+      role=d.role||"staff";ACC={all:d.allShops===true||!Array.isArray(d.shops),shops:Array.isArray(d.shops)?d.shops:[]};$("meName").textContent=d.name||d.username||u.email;
       document.body.classList.toggle("staff",!isAdmin());
       document.body.classList.toggle("nosa",!isSuper());
       document.body.classList.toggle("super",isSuper());
@@ -79,32 +87,74 @@ function ruleMarkup(cat,cost){if(!cat)return null;
 
 // ---- data
 async function load(){
-  const [p,b,c]=await Promise.all([getDocs(collection(db,"products")),getDocs(collection(db,"batches")),getDocs(collection(db,"categories"))]);
-  P=p.docs.map(d=>({id:d.id,...d.data()})).filter(x=>!x.archived);
+  const [p,b,c,s]=await Promise.all([getDocs(collection(db,"products")),getDocs(collection(db,"batches")),getDocs(collection(db,"categories")),getDocs(collection(db,"shops"))]);
+  SH=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+  const okShops=allowedShops();
+  if(shop&&!okShops.some(x=>x.id===shop)){shop="";localStorage.removeItem("dr_shop")}
+  if(!isAdmin()&&!shop&&okShops.length){shop=okShops[0].id;localStorage.setItem("dr_shop",shop)}
+  const noAccess=!isAdmin()&&SH.length>0&&!shop;
+  if(noAccess)toast("No shop has been assigned to your account. Ask the superadmin.",true);
+  C=c.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+  PA=p.docs.map(d=>({id:d.id,...d.data()})).filter(x=>!x.archived);
+  const names=new Set(C.filter(x=>!shop||inShop(x,shop)).map(x=>x.name));
+  P=noAccess?[]:PA.filter(x=>!shop||names.has(x.category));
   const ids=new Set(P.map(x=>x.id));
   B=b.docs.map(d=>({id:d.id,...d.data()})).filter(x=>ids.has(x.productId));
-  C=c.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
-  fillCats($("p_category").value);badges();
+  shopUi();fillCats($("p_category").value);badges();
 }
 function badges(){
   const n=P.filter(p=>isOut(p)||isLow(p)).length,e=live(B).filter(b=>b.expiry&&daysTo(b)<=batchWindow(b)).length;
   const set=(id,v)=>{$(id).hidden=!v;$(id).textContent=v};set("bLow",n);set("bExp",e)}
 function fillCats(keep,extra){
-  const names=C.map(c=>c.name);if(extra&&!names.includes(extra))names.push(extra);
+  const names=C.filter(c=>!shop||inShop(c,shop)).map(c=>c.name);if(extra&&!names.includes(extra))names.push(extra);
   $("p_category").innerHTML=`<option value="">${C.length?"Select category":"No categories yet, add one in Settings"}</option>`+names.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join("");
   if(keep&&names.includes(keep))$("p_category").value=keep}
 
 // ---- nav
 function show(v){
   if(v==="settings"&&!isAdmin()){toast("Only admins can open Settings.",true);v="dashboard"}
+  if(v==="analytics"&&!isAdmin()){toast("Only admins can open Analytics.",true);v="dashboard"}
   if(v==="staff"&&!isSuper()){toast("Only the superadmin can open Staff accounts.",true);v="dashboard"}
   if(v==="transactions"&&!isSuper()){toast("Only the superadmin can open Transactions.",true);v="dashboard"}
   if(v!=="sales")slFsOff();
   document.querySelectorAll("main>section").forEach(s=>s.classList.toggle("on",s.id===v));
   document.querySelectorAll("aside nav button").forEach(b=>b.classList.toggle("on",b.dataset.v===(v==="product"?"products":v)));
   $("title").textContent=titles[v];$("sub").textContent=subs[v];$("side").classList.remove("open");
-  ({dashboard:dash,products:prodTable,product:prodDetail,movements:moves,transactions:txView,expiry:expiry,pricing:calc,settings:settingsView,staff:staffView,sales:salesView})[v]?.()}
+  ({dashboard:dash,products:prodTable,product:prodDetail,movements:moves,transactions:txView,expiry:expiry,pricing:calc,settings:settingsView,staff:staffView,sales:salesView,analytics:anView})[v]?.()}
 const go=async v=>{try{await load()}catch(e){toast("Could not refresh data.",true)}show(v)};
+// ---- shops
+function shopUi(){$("shopSel").innerHTML=(isAdmin()?'<option value="">All shops</option>':"")+allowedShops().map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join("");$("shopSel").value=shop}
+$("shopSel").onchange=()=>{shop=$("shopSel").value;localStorage.setItem("dr_shop",shop);
+  if(CART.length&&!confirm("Changing shop clears the current cart. Continue?")){$("shopSel").value=shop=localStorage.getItem("dr_shop")||"";return}
+  CART=[];
+  const v=document.querySelector("main>section.on")?.id||"dashboard";go(v==="product"?"products":v)};
+const shCatDraw=on=>{on=new Set(on);$("shCatList").innerHTML=C.length?C.map(c=>`<label><input type="checkbox" class="sh_c" value="${c.id}"${on.has(c.id)?" checked":""}> ${esc(c.name)}</label>`).join(""):'<small class="hint">No categories yet. Add them below, then edit this shop to tick them.</small>'};
+const csSel=()=>[...document.querySelectorAll("#cs_shops input:checked")].map(i=>i.value);
+const csShopsDraw=on=>{on=new Set(on);$("cs_shops").innerHTML=SH.length?SH.map(s=>`<label><input type="checkbox" value="${s.id}"${on.has(s.id)?" checked":""}> ${esc(s.name)}</label>`).join(""):'<small class="hint">No shops yet. Create a shop first.</small>'};
+function shopsView(){
+  const sid=$("sh_id").value;
+  shCatDraw(sid?C.filter(c=>inShop(c,sid)).map(c=>c.id):[...document.querySelectorAll("#shCatList input:checked")].map(i=>i.value));
+  csShopsDraw(csSel());
+  $("shList").innerHTML=SH.length?"<table><tr><th>Shop</th><th>Categories</th><th></th></tr>"+SH.map(s=>`<tr><td>${esc(s.name)}</td><td style="white-space:normal">${esc(C.filter(c=>inShop(c,s.id)).map(c=>c.name).join(", ")||"None yet")}</td><td><button class="btn sm ghost" data-she="${s.id}">Edit</button> <button class="btn sm ghost" data-shd="${s.id}">Delete</button></td></tr>`).join("")+"</table>":'<p class="empty">No shops yet. Create your first one above, then tick the categories it sells.</p>'}
+$("shList").addEventListener("click",e=>{
+  const r=e.target.closest("[data-she]"),d=e.target.closest("[data-shd]");
+  if(r){const s=SH.find(x=>x.id===r.dataset.she);$("sh_id").value=s.id;$("sh_name").value=s.name;shCatDraw(C.filter(c=>inShop(c,s.id)).map(c=>c.id));scrollTo(0,0)}
+  if(d)guard(d,async()=>{const s=SH.find(x=>x.id===d.dataset.shd);
+    if(C.some(c=>inShop(c,s.id)))throw new Error("Categories are still ticked for this shop. Edit the shop and untick them first.");
+    if(!confirm(`Delete shop "${s.name}"?`))return;
+    await runTx(async t=>t.delete(doc(db,"shops",s.id)));await load();settingsView();toast("Shop deleted")})});
+$("shReset").onclick=()=>{$("shForm").reset();$("sh_id").value="";shCatDraw([])};
+$("shForm").onsubmit=e=>{e.preventDefault();guard($("shSave"),async()=>{
+  const id=$("sh_id").value,name=$("sh_name").value.trim();
+  if(!name)throw new Error("Enter a shop name.");
+  if(SH.some(s=>s.name.toLowerCase()===name.toLowerCase()&&s.id!==id))throw new Error("That shop already exists.");
+  const ticked=new Set([...document.querySelectorAll("#shCatList input:checked")].map(i=>i.value));
+  const ref=id?doc(db,"shops",id):doc(collection(db,"shops"));
+  await runTx(async t=>{
+    t.set(ref,{name,updatedAt:serverTimestamp()});
+    C.forEach(c=>{const cur=shopIdsOf(c),has=cur.includes(ref.id),want=ticked.has(c.id);
+      if(has!==want)t.update(doc(db,"categories",c.id),{shopIds:want?[...cur,ref.id]:cur.filter(x=>x!==ref.id),updatedAt:serverTimestamp()})})});
+  $("shReset").click();await load();settingsView();toast("Shop saved")})};
 document.querySelectorAll("aside nav button").forEach(b=>b.onclick=()=>{pf="all";go(b.dataset.v)});
 document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>go(b.dataset.go));
 $("newProd").onclick=async()=>{await go("stockin");setMode("new");$("pReset").click();$("p_name").focus()};
@@ -124,7 +174,7 @@ async function dash(){
   const cat={};P.forEach(p=>cat[p.category]=(cat[p.category]||0)+p.stock*p.cost);
   const cats=Object.entries(cat).sort((a,b)=>b[1]-a[1]),cmax=Math.max(1,...cats.map(c=>c[1]));
   const m=await getDocs(query(collection(db,"movements"),orderBy("at","desc"),limit(300)));
-  const mv=m.docs.map(d=>d.data());
+  const mv=m.docs.map(d=>d.data()).filter(x=>!shop||prodOf(x.productId));
   const ws=new Date();ws.setHours(0,0,0,0);ws.setDate(ws.getDate()-ws.getDay());
   const inn=Array(7).fill(0),outq=Array(7).fill(0);
   mv.forEach(x=>{const t=x.at?.toDate();if(!t||t<ws)return;if(x.qty>0)inn[t.getDay()]+=x.qty;else outq[t.getDay()]-=x.qty});
@@ -248,7 +298,7 @@ document.querySelectorAll("#pChips button").forEach(b=>b.onclick=()=>{pf=b.datas
 const F={name:"p_name",sku:"p_sku",barcode:"p_barcode",category:"p_category",supplier:"p_supplier",unit:"p_unit"};
 // auto-generated SKU, e.g. DR-K7M2QX (unique among current products)
 const genSku=()=>{const A="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";let s;
-  do{s="DR-"+Array.from({length:6},()=>A[Math.floor(Math.random()*A.length)]).join("")}while(P.some(p=>p.sku===s));return s};
+  do{s="DR-"+Array.from({length:6},()=>A[Math.floor(Math.random()*A.length)]).join("")}while(PA.some(p=>p.sku===s));return s};
 $("p_gen").onclick=()=>{$("p_sku").value=genSku()};
 
 // pack rows on the product form
@@ -288,8 +338,8 @@ $("pForm").onsubmit=e=>{e.preventDefault();guard($("pSave"),async()=>{
   for(const k in F)d[k]=$(F[k]).value.trim();
   if(!d.category)throw new Error("Choose a category. Admins can add categories in Settings.");
   if(!d.sku)d.sku=genSku();
-  if(P.some(p=>p.sku===d.sku&&p.id!==id))throw new Error("That SKU already exists.");
-  if(d.barcode&&P.some(p=>p.barcode===d.barcode&&p.id!==id))throw new Error("That barcode already exists.");
+  if(PA.some(p=>p.sku===d.sku&&p.id!==id))throw new Error("That SKU already exists.");
+  if(d.barcode&&PA.some(p=>p.barcode===d.barcode&&p.id!==id))throw new Error("That barcode already exists.");
   const packs=readPacks(true);
   const old=id?prodOf(id):null;
   // keep any saved pack prices when the pack name and size are unchanged
@@ -392,7 +442,8 @@ $("outForm").onsubmit=e=>{e.preventDefault();guard($("outForm").querySelector(".
 
 async function moves(){
   const m=await getDocs(query(collection(db,"movements"),orderBy("at","desc"),limit(50)));
-  $("mTable").innerHTML=m.empty?'<p class="empty">No movements yet.</p>':"<table><tr><th>Product</th><th>Qty</th><th>Reason</th><th>Note</th><th>By</th><th>When</th></tr>"+m.docs.map(d=>{const x=d.data();
+  const mrows=m.docs.filter(d=>!shop||prodOf(d.data().productId));
+  $("mTable").innerHTML=!mrows.length?'<p class="empty">No movements yet.</p>':"<table><tr><th>Product</th><th>Qty</th><th>Reason</th><th>Note</th><th>By</th><th>When</th></tr>"+mrows.map(d=>{const x=d.data();
     return `<tr><td>${esc(prodOf(x.productId)?.name||"Archived")}</td><td class="${x.qty>0?"pos":"neg"}">${x.qty>0?"+":""}${x.qty}</td><td>${esc(x.reason)}</td><td>${esc(x.note||"")}</td><td>${esc(x.by)}</td><td>${x.at?x.at.toDate().toLocaleString("en-NG"):""}</td></tr>`}).join("")+"</table>"}
 
 // ---- expiry (reminder window comes from each product's category)
@@ -452,31 +503,25 @@ $("csRules").addEventListener("click",e=>{if(e.target.closest(".r_x"))e.target.c
 const ruleText=c=>{const e=v=>v===""||v==null;
   return [...(c.rules||[]).map(r=>`cost ${r.op} ${Number(r.value).toLocaleString("en-NG")} → retail ${r.markup}%${e(r.wholesale)?"":`, wholesale ${r.wholesale}%`}`),
   e(c.defaultMarkup)&&e(c.defaultWholesale)?"":`otherwise retail ${e(c.defaultMarkup)?"none":c.defaultMarkup+"%"}, wholesale ${e(c.defaultWholesale)?"none":c.defaultWholesale+"%"}`].filter(Boolean).join("; ")||"No rules"};
-// ---- settings accordion: both sections start closed, clicking one opens it (and closes the other)
-const ACC={rc:["rcForm"],cs:["csForm","csList"]};
-function setAcc(k){
-  document.querySelectorAll(".accbtn").forEach(b=>{const on=b.dataset.a===k;b.classList.toggle("on",on);b.setAttribute("aria-expanded",on);b.querySelector("i").textContent=on?"−":"+"});
-  for(const x in ACC)ACC[x].forEach(id=>$(id).hidden=x!==k);
-  if(k==="rc")rcPreview()}
-document.querySelectorAll(".accbtn").forEach(b=>b.onclick=()=>setAcc(b.getAttribute("aria-expanded")==="true"?"":b.dataset.a));
 function settingsView(){
-  rcFill(RC);
-  $("csList").innerHTML=C.length?"<table><tr><th>Category</th><th>Markup rules</th><th>Minimum stock</th><th>Expiry reminder</th><th>Products</th><th></th></tr>"+C.map(c=>`<tr><td>${esc(c.name)}</td><td style="white-space:normal">${esc(ruleText(c))}</td><td>${c.minStock===""||c.minStock==null?"Not set":c.minStock}</td><td>${c.expiryMonths} mo before</td><td>${P.filter(p=>p.category===c.name).length}</td>
+  shopsView();rcFill(RC);
+  $("csList").innerHTML=C.length?"<table><tr><th>Category</th><th>Shop</th><th>Markup rules</th><th>Minimum stock</th><th>Expiry reminder</th><th>Products</th><th></th></tr>"+C.map(c=>`<tr><td>${esc(c.name)}</td><td>${esc(shopIdsOf(c).map(id=>SH.find(s=>s.id===id)?.name).filter(Boolean).join(", ")||"Unassigned")}</td><td style="white-space:normal">${esc(ruleText(c))}</td><td>${c.minStock===""||c.minStock==null?"Not set":c.minStock}</td><td>${c.expiryMonths} mo before</td><td>${PA.filter(p=>p.category===c.name).length}</td>
     <td><button class="btn sm ghost" data-ce="${c.id}">Edit</button> <button class="btn sm ghost" data-cd="${c.id}">Delete</button></td></tr>`).join("")+"</table>":'<p class="empty">No categories yet. Add your first one above.</p>';
   $("csList").querySelectorAll("[data-ce]").forEach(b=>b.onclick=()=>{const c=C.find(x=>x.id===b.dataset.ce);
-    $("csForm").reset();$("csRules").innerHTML="";$("cs_id").value=c.id;$("cs_name").value=c.name;$("cs_def").value=c.defaultMarkup??"";$("cs_dw").value=c.defaultWholesale??"";$("cs_exp").value=c.expiryMonths??1;$("cs_min").value=c.minStock??"";
-    (c.rules||[]).forEach(r=>ruleRow(r));setAcc("cs");scrollTo(0,0)});
+    $("csForm").reset();$("csRules").innerHTML="";$("cs_id").value=c.id;$("cs_name").value=c.name;$("cs_def").value=c.defaultMarkup??"";$("cs_dw").value=c.defaultWholesale??"";$("cs_exp").value=c.expiryMonths??1;$("cs_min").value=c.minStock??"";csShopsDraw(shopIdsOf(c));
+    (c.rules||[]).forEach(r=>ruleRow(r));scrollTo(0,0)});
   $("csList").querySelectorAll("[data-cd]").forEach(b=>b.onclick=()=>guard(b,async()=>{
     const c=C.find(x=>x.id===b.dataset.cd);
-    if(P.some(p=>p.category===c.name))throw new Error("Products still use this category. Move them first.");
+    if(PA.some(p=>p.category===c.name))throw new Error("Products still use this category. Move them first.");
     if(!confirm(`Delete category "${c.name}"?`))return;
     await runTx(async t=>t.delete(doc(db,"categories",c.id)));
     await load();settingsView();toast("Category deleted")}));
 }
-$("csReset").onclick=()=>{$("csForm").reset();$("csRules").innerHTML="";$("cs_id").value=""};
+$("csReset").onclick=()=>{$("csForm").reset();$("csRules").innerHTML="";$("cs_id").value="";csShopsDraw([])};
 $("csForm").onsubmit=e=>{e.preventDefault();guard($("csSave"),async()=>{
   const id=$("cs_id").value,name=$("cs_name").value.trim();
   if(!name)throw new Error("Enter a category name.");
+  const shopIds=csSel();if(!shopIds.length)throw new Error("Tick at least one shop that sells this category.");
   if(C.some(c=>c.name.toLowerCase()===name.toLowerCase()&&c.id!==id))throw new Error("That category already exists.");
   const rules=[...document.querySelectorAll("#csRules .rulerow")].map(r=>{
     const op=r.querySelector(".r_op").value,v=r.querySelector(".r_v").value,mk=r.querySelector(".r_m").value,wh=r.querySelector(".r_w").value;
@@ -485,8 +530,8 @@ $("csForm").onsubmit=e=>{e.preventDefault();guard($("csSave"),async()=>{
   const defRaw=$("cs_def").value,dwRaw=$("cs_dw").value,expiryMonths=parseFloat($("cs_exp").value);
   if(!(expiryMonths>0))throw new Error("Expiry reminder must be above zero months.");
   const minRaw=$("cs_min").value;if(minRaw!==""&&!(parseFloat(minRaw)>=0))throw new Error("Minimum stock cannot be negative.");
-  const data={name,minStock:minRaw===""?"":parseFloat(minRaw),rules,defaultMarkup:defRaw===""?"":parseFloat(defRaw),defaultWholesale:dwRaw===""?"":parseFloat(dwRaw),expiryMonths,updatedAt:serverTimestamp()};
-  const old=id?C.find(c=>c.id===id):null,renamed=old&&old.name!==name?P.filter(p=>p.category===old.name):[];
+  const data={name,shopIds,minStock:minRaw===""?"":parseFloat(minRaw),rules,defaultMarkup:defRaw===""?"":parseFloat(defRaw),defaultWholesale:dwRaw===""?"":parseFloat(dwRaw),expiryMonths,updatedAt:serverTimestamp()};
+  const old=id?C.find(c=>c.id===id):null,renamed=old&&old.name!==name?PA.filter(p=>p.category===old.name):[];
   await runTx(async t=>{
     t.set(id?doc(db,"categories",id):doc(collection(db,"categories")),data);
     renamed.forEach(p=>t.update(doc(db,"products",p.id),{category:name,updatedAt:serverTimestamp()}))});
@@ -496,7 +541,7 @@ $("csForm").onsubmit=e=>{e.preventDefault();guard($("csSave"),async()=>{
 const pad2=n=>String(n).padStart(2,"0");
 const ymd=d=>`${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
 const fromYmd=s=>{const [y,m,d]=s.split("-").map(Number);return new Date(y,m-1,d)};
-const TX_TYPES=["Stock in","Sale","Damaged","Expired","Missing","Theft or loss","Internal consumption","Supplier return","Stock transfer","Authorized correction"];
+const TX_TYPES=["Stock in","Sale","Return","Damaged","Expired","Missing","Theft or loss","Internal consumption","Supplier return","Stock transfer","Authorized correction"];
 $("tx_r").innerHTML+=TX_TYPES.map(t=>`<option>${esc(t)}</option>`).join("");
 let TX=[],txReq=0,txSpan=null;
 function txRange(){
@@ -523,7 +568,7 @@ async function txLoad(){
   catch(e){console.error(e);if(my===txReq)$("txTable").innerHTML='<p class="empty">Could not load transactions.</p>'}}
 function txRows(){
   const t=$("tx_r").value,q=$("tx_q").value.trim().toLowerCase();
-  return TX.map(x=>{const p=prodOf(x.productId),b=B.find(y=>y.id===x.batchId);
+  return TX.filter(x=>!shop||prodOf(x.productId)).map(x=>{const p=prodOf(x.productId),b=B.find(y=>y.id===x.batchId);
     return{when:x.at?.toDate()||null,product:p?.name||"Archived product",sku:p?.sku||"",category:p?.category||"",unit:p?.unit||"",qty:x.qty,reason:x.reason||"",batch:b?.batchNo||"",ref:x.ref||b?.ref||"",note:x.note||"",by:x.by||""}})
     .filter(r=>(!t||r.reason===t)&&(!q||[r.product,r.sku,r.reason,r.batch,r.ref,r.note,r.by].join(" ").toLowerCase().includes(q)))}
 function txDraw(){
@@ -580,6 +625,7 @@ $("sl_list").onclick=e=>{const b=e.target.closest("button");if(b)slPick(prodOf(b
 $("sl_u").addEventListener("change",slFill);$("sl_t").addEventListener("change",slFill);$("sl_q").addEventListener("input",slHint);
 
 $("slForm").onsubmit=e=>{e.preventDefault();
+  if(SH.length&&!shop){toast("Choose a shop in the left menu first. Sales are recorded per shop.",true);return}
   const p=prodOf($("sl_p").value);if(!p){toast("Choose a product.",true);return}
   const idx=+$("sl_u").value,pk=packsOf(p)[idx],q=num("sl_q"),price=num("sl_pr");
   if(!pk){toast("Choose the unit to sell.",true);return}
@@ -596,9 +642,9 @@ function slTot(){
   const sub=money(CART.reduce((s,l)=>s+slLine(l),0)),dv=Math.max(num("sl_dv"),0),pct=$("sl_dt").value==="pct";
   const disc=money(Math.min(pct?sub*Math.min(dv,100)/100:dv,sub));
   return{sub,disc,total:money(sub-disc)}}
-function slSum(){const T=slTot(),td=num("sl_td");
-  $("slTot").innerHTML=`<div><span>Subtotal</span><b>${naira(T.sub)}</b></div><div><span>Discount</span><b>${T.disc?"− "+naira(T.disc):naira(0)}</b></div><div class="gt"><span>Total</span><span>${naira(T.total)}</span></div>${td>0?`<div><span>Tendered</span><b>${naira(td)}</b></div><div><span>Change</span><b>${td>=T.total?naira(money(td-T.total)):"Short by "+naira(money(T.total-td))}</b></div>`:""}`;
-  $("slDone").disabled=!CART.length;$("slHold").disabled=!CART.length}
+function slSum(){const T=slTot(),ps=readPays(T.total),paid=money(ps.reduce((s,p)=>s+p.amount,0)),show=ps.length>1||(ps[0]&&ps[0].raw!=="");
+  $("slTot").innerHTML=`<div><span>Subtotal</span><b>${naira(T.sub)}</b></div><div><span>Discount</span><b>${T.disc?"− "+naira(T.disc):naira(0)}</b></div><div class="gt"><span>Total</span><span>${naira(T.total)}</span></div>${show?`<div><span>Paid</span><b>${naira(paid)}</b></div><div><span>${paid>=T.total?"Change":"Remaining"}</span><b>${naira(money(Math.abs(paid-T.total)))}</b></div>`:""}`;
+  $("slDone").disabled=!CART.length}
 function slCartDraw(){
   $("slCart").innerHTML=(CART.length?`<table><tr><th>Item</th><th>Qty</th><th>Price (₦)</th><th>Total</th><th></th></tr>${CART.map((l,i)=>`<tr data-i="${i}"><td>${esc(l.name)}<small class="hint" style="display:block">${esc(l.pname)}${l.mult>1?` (${l.mult} ${esc(l.unit)})`:""}</small></td><td><input class="c_q" type="number" min="0" step="any" value="${l.q}"></td><td><input class="c_p" type="number" min="0" step="0.01" value="${l.price}"></td><td class="c_t">${naira(slLine(l))}</td><td><button type="button" class="btn sm ghost c_x" aria-label="Remove">×</button></td></tr>`).join("")}</table>`:'<p class="empty">The cart is empty. Search a product above and add it.</p>');
   slSum()}
@@ -607,27 +653,7 @@ $("slCart").addEventListener("input",e=>{const tr=e.target.closest("tr[data-i]")
   tr.querySelector(".c_t").textContent=naira(slLine(l));slSum()});
 $("slCart").addEventListener("click",e=>{const b=e.target.closest(".c_x");if(!b)return;CART.splice(+b.closest("tr").dataset.i,1);slCartDraw()});
 $("slCheck").addEventListener("input",slSum);
-$("slClear").onclick=()=>{if(CART.length&&!confirm("Clear the whole cart?"))return;CART=[];$("slCheck").reset();slCartDraw()};
-
-// ---- held sales (kept on this device, survive a refresh)
-const HELD_KEY="dr_held_v1";
-let HELD=[];try{HELD=JSON.parse(localStorage.getItem(HELD_KEY))||[]}catch{HELD=[]}
-const heldSave=()=>{try{localStorage.setItem(HELD_KEY,JSON.stringify(HELD))}catch{}};
-function heldDraw(){const el=$("slHeld");el.hidden=!HELD.length;if(!HELD.length){el.innerHTML="";return}
-  el.innerHTML=`<h4>HELD SALES (${HELD.length})</h4><div class="held">${HELD.map((h,i)=>{
-    const sub=money(h.cart.reduce((s,l)=>s+l.q*l.price,0));
-    return`<div class="hld"><div><b>${esc(h.customer||"Walk-in customer")}</b><small>${h.cart.length} item(s) · ${naira(sub)} · ${new Date(h.at).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit"})}</small></div><div class="row"><button type="button" class="btn sm" data-hr="${i}">Resume</button><button type="button" class="btn sm ghost" data-hd="${i}">Discard</button></div></div>`}).join("")}</div>`}
-$("slHold").onclick=()=>{
-  if(!CART.length){toast("Add an item before holding a sale.",true);return}
-  HELD.push({at:Date.now(),cart:CART.map(l=>({...l})),customer:$("sl_cu").value.trim(),payment:$("sl_pay").value,dt:$("sl_dt").value,dv:$("sl_dv").value,td:$("sl_td").value,note:$("sl_n").value});
-  heldSave();CART=[];$("slCheck").reset();slCartDraw();heldDraw();toast("Sale held. Resume it from the list above.")};
-$("slHeld").addEventListener("click",e=>{
-  const r=e.target.closest("[data-hr]"),d=e.target.closest("[data-hd]");
-  if(r){if(CART.length){toast("Hold or clear the current sale first.",true);return}
-    const h=HELD.splice(+r.dataset.hr,1)[0];heldSave();CART=h.cart;
-    $("sl_cu").value=h.customer;$("sl_pay").value=h.payment;$("sl_dt").value=h.dt;$("sl_dv").value=h.dv;$("sl_td").value=h.td;$("sl_n").value=h.note;
-    slCartDraw();heldDraw();toast("Sale resumed")}
-  if(d){if(!confirm("Discard this held sale?"))return;HELD.splice(+d.dataset.hd,1);heldSave();heldDraw()}});
+$("slClear").onclick=()=>{if(CART.length&&!confirm("Clear the whole cart?"))return;CART=[];$("slCheck").reset();payReset();slCartDraw()};
 
 const slNo=()=>{const A="ABCDEFGHJKLMNPQRSTUVWXYZ23456789",d=new Date();
   return`S${d.getFullYear()}${pad2(d.getMonth()+1)}${pad2(d.getDate())}-`+Array.from({length:4},()=>A[Math.floor(Math.random()*A.length)]).join("")};
@@ -636,6 +662,7 @@ $("slCheck").onsubmit=e=>{e.preventDefault();guard($("slDone"),async()=>{
   if(!CART.length)throw new Error("Add at least one product to the cart.");
   if(CART.some(l=>!(l.q>0)))throw new Error("Every cart line needs a quantity above zero.");
   if(CART.some(l=>!(l.price>0)))throw new Error("Every cart line needs a price above zero.");
+  if(SH.length&&!shop)throw new Error("Choose a shop in the left menu first. Sales are recorded per shop.");
   const pct=$("sl_dt").value==="pct",dv=num("sl_dv");
   if(dv<0)throw new Error("Discount cannot be negative.");
   if(pct&&dv>100)throw new Error("Discount cannot be more than 100%.");
@@ -644,7 +671,16 @@ $("slCheck").onsubmit=e=>{e.preventDefault();guard($("slDone"),async()=>{
   if(below.length&&!confirm("Selling below cost: "+[...new Set(below)].join(", ")+". Continue?"))return;
   const costNow=CART.reduce((s,l)=>{const p=prodOf(l.pid);return s+(p?p.cost*l.mult*l.q:0)},0);
   if(!below.length&&T.total<costNow&&!confirm("After the discount this sale is below cost. Continue?"))return;
-  const receiptNo=slNo(),sref=doc(collection(db,"sales")),customer=$("sl_cu").value.trim(),note=$("sl_n").value.trim(),payment=$("sl_pay").value;
+  const pays=readPays(T.total).filter(p=>p.amount>0);
+  if(!pays.length)throw new Error("Enter a payment amount.");
+  const paidSum=money(pays.reduce((s,p)=>s+p.amount,0));
+  if(paidSum<T.total-0.005)throw new Error(`Payments are short by ${naira(money(T.total-paidSum))}. Add another payment method, or use Credit (pay later) for the balance.`);
+  let change=0;
+  if(paidSum>T.total+0.005){const cp=pays.find(p=>p.method==="Cash");
+    if(!cp||cp.amount<paidSum-T.total-0.005)throw new Error("Payments are more than the total. Only cash can give change.");
+    change=money(paidSum-T.total);cp.amount=money(cp.amount-change)}
+  const payment=[...new Set(pays.map(p=>p.method))].join(" + ");
+  const receiptNo=slNo(),sref=doc(collection(db,"sales")),customer=$("sl_cu").value.trim(),note=$("sl_n").value.trim();
   let sale;
   await runTx(async t=>{
     const PD={},BT={},pids=[...new Set(CART.map(l=>l.pid))];
@@ -669,9 +705,9 @@ $("slCheck").onsubmit=e=>{e.preventDefault();guard($("slDone"),async()=>{
       BT[pid].forEach(b=>{if(b.left!==b.start)t.update(b.ref,{qtyRemaining:b.left})})}
     mv.forEach(m=>t.set(doc(collection(db,"movements")),{...m,reason:"Sale",ref:receiptNo,saleId:sref.id,by:user.email,at:serverTimestamp()}));
     costTotal=money(costTotal);
-    sale={receiptNo,items,subtotal:T.sub,discountType:pct?"percent":"amount",discountValue:dv,discount:T.disc,total:T.total,costTotal,profit:money(T.total-costTotal),payment,customer,note,by:user.email};
+    sale={receiptNo,shopId:shop,items,subtotal:T.sub,discountType:pct?"percent":"amount",discountValue:dv,discount:T.disc,total:T.total,costTotal,profit:money(T.total-costTotal),payment,payments:pays.map(p=>({method:p.method,amount:p.amount})),change,customer,note,by:user.email};
     t.set(sref,{...sale,at:serverTimestamp()})});
-  CART=[];$("slCheck").reset();await load();slListDraw();slCartDraw();slToday();
+  CART=[];$("slCheck").reset();payReset();await load();slListDraw();slCartDraw();slToday();
   toast(`Sale ${receiptNo} recorded: ${naira(sale.total)}`);
   try{printReceipt({...sale,at:new Date()})}catch(err){console.error(err)}})};
 
@@ -686,10 +722,10 @@ function rcRead(){const c={};for(const k in RC_TXT)c[k]=$(RC_TXT[k]).value.trim(
 function rcHtml(s,c=RC){
   const d=s.at?.toDate?s.at.toDate():s.at,mw=c.w==="a4"?"190mm":c.w+"mm";
   return `<!doctype html><meta charset="utf-8"><title>${esc(s.receiptNo)}</title><style>body{font:${c.s}px/1.45 ui-monospace,monospace;max-width:${mw};margin:12px auto;color:#000}h2{text-align:center;margin:0 0 2px}p{margin:2px 0;text-align:center}table{width:100%;border-collapse:collapse;margin:10px 0}td{padding:3px 0;vertical-align:top}td:last-child{text-align:right;white-space:nowrap}hr{border:0;border-top:1px dashed #000}.t td{font-weight:700;font-size:1.15em}</style>
-  <h2>${esc(c.name)}</h2>${c.addr?`<p>${esc(c.addr)}</p>`:""}${c.phone?`<p>${esc(c.phone)}</p>`:""}${c.head?`<p>${esc(c.head)}</p>`:""}
+  <h2>${esc(c.name)}</h2>${SH.find(x=>x.id===s.shopId)?`<p>${esc(SH.find(x=>x.id===s.shopId).name)}</p>`:""}${c.addr?`<p>${esc(c.addr)}</p>`:""}${c.phone?`<p>${esc(c.phone)}</p>`:""}${c.head?`<p>${esc(c.head)}</p>`:""}
   ${c.no?`<p>${esc(s.receiptNo)}</p>`:""}${c.date&&d?`<p>${d.toLocaleString("en-NG")}</p>`:""}${c.cu&&s.customer?`<p>Customer: ${esc(s.customer)}</p>`:""}<hr>
   <table>${s.items.map(i=>`<tr><td>${esc(i.name)}<br>${i.qty} ${esc(i.packName)} × ${naira(i.unitPrice)}</td><td>${naira(i.lineTotal)}</td></tr>`).join("")}</table><hr>
-  <table><tr><td>Subtotal</td><td>${naira(s.subtotal)}</td></tr>${s.discount?`<tr><td>Discount${s.discountType==="percent"?` (${s.discountValue}%)`:""}</td><td>− ${naira(s.discount)}</td></tr>`:""}<tr class="t"><td>Total</td><td>${naira(s.total)}</td></tr>${c.pay?`<tr><td>Paid by</td><td>${esc(s.payment)}</td></tr>`:""}</table>
+  <table><tr><td>Subtotal</td><td>${naira(s.subtotal)}</td></tr>${s.discount?`<tr><td>Discount${s.discountType==="percent"?` (${s.discountValue}%)`:""}</td><td>− ${naira(s.discount)}</td></tr>`:""}<tr class="t"><td>Total</td><td>${naira(s.total)}</td></tr>${c.pay?payTxt(s):""}</table>
   <hr>${c.by?`<p>Served by ${esc(s.by)}</p>`:""}${c.note&&s.note?`<p>Note: ${esc(s.note)}</p>`:""}${c.foot?`<p>${esc(c.foot)}</p>`:""}`}
 const RC_SAMPLE={receiptNo:"S20260101-ABCD",at:new Date(),customer:"Sample Customer",payment:"Cash",by:"staff",note:"Sample note",subtotal:3500,discount:500,discountType:"amount",discountValue:500,total:3000,
   items:[{name:"Sample product",packName:"Piece",qty:2,unitPrice:1000,lineTotal:2000},{name:"Another item",packName:"Pack",qty:1,unitPrice:1500,lineTotal:1500}]};
@@ -713,20 +749,22 @@ function printReceipt(s){
 // ---- sales top bar: full screen, receipts, sales report
 let slMode="pos";
 const slBarBtns=()=>document.querySelectorAll("#slBar .slb[data-t]");
-function slFsUi(){const on=document.body.classList.contains("fs");$("slFsT").textContent=on?"Exit full screen (Esc)":"Full screen";$("slFs").classList.toggle("on",on)}
+function slFsUi(){const on=document.body.classList.contains("fs");$("slFsT").textContent=on?"Exit full screen":"Full screen";$("slFs").classList.toggle("on",on)}
 function slFsOn(){document.body.classList.add("fs");document.querySelector("main").classList.add("full");
   const el=document.documentElement;try{(el.requestFullscreen?.call(el)||Promise.resolve()).catch(()=>{})}catch{}slFsUi()}
 function slFsOff(){if(!document.body.classList.contains("fs"))return;
   document.body.classList.remove("fs");document.querySelector("main").classList.remove("full");
   if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});slFsUi()}
 $("slFs").onclick=()=>document.body.classList.contains("fs")?slFsOff():slFsOn();
-document.addEventListener("fullscreenchange",()=>{if(!document.fullscreenElement)slFsOff()});
-document.addEventListener("keydown",e=>{if(e.key==="Escape")slFsOff()});
+document.addEventListener("fullscreenchange",slFsUi);
+document.addEventListener("click",e=>{
+  if(!document.body.classList.contains("fs")||document.fullscreenElement||e.target.closest("#slFs"))return;
+  try{document.documentElement.requestFullscreen?.().catch(()=>{})}catch{}},true);
 slBarBtns().forEach(b=>b.onclick=()=>slTab(b.dataset.t));
 function slTab(t){slMode=t;
   slBarBtns().forEach(b=>b.classList.toggle("on",b.dataset.t===t));
-  $("slPos").hidden=t!=="pos";$("slRv").hidden=t!=="rv";$("slSr").hidden=t!=="sr";
-  if(t==="rv"||t==="sr"){svBuild(t);svLoad(t)}else $("sl_s").focus()}
+  $("slPos").hidden=t!=="pos";$("slRv").hidden=t!=="rv";$("slSr").hidden=t!=="sr";$("slRf").hidden=t!=="rf";
+  if(t==="rv"||t==="sr"){svBuild(t);svLoad(t)}else if(t==="rf")rfView();else $("sl_s").focus()}
 function slToday(){} // today's sales now live in the Sales report panel
 
 const SV_PAYS=["Cash","Transfer","POS","Credit (pay later)"];
@@ -748,7 +786,7 @@ function svBuild(k){const s=SV[k];if(s.built)return;s.built=1;
   $(k+"_p").onchange=()=>{dsw();svLoad(k)};
   [k+"_d",k+"_f",k+"_t"].forEach(id=>$(id).onchange=()=>svLoad(k));
   $(k+"_m").onchange=()=>svDraw(k);$(k+"_q").oninput=()=>svDraw(k);
-  $(k+"_o").onclick=e=>{const b=e.target.closest("[data-rc]");if(b){printReceipt(SV[k].shown[+b.dataset.rc]);return}
+  $(k+"_o").onclick=e=>{const f=e.target.closest("[data-rf]");if(f){slTab("rf");$("rf_q").value=f.dataset.rf;rfFind(f.dataset.rf);return}const b=e.target.closest("[data-rc]");if(b){printReceipt(SV[k].shown[+b.dataset.rc]);return}
     const p=e.target.closest("[data-pay]");if(p){const m=$(k+"_m");m.value=m.value===p.dataset.pay?"":p.dataset.pay;svDraw(k)}}}
 function svRange(k){
   const p=$(k+"_p").value,now=new Date(),T=new Date(now.getFullYear(),now.getMonth(),now.getDate());
@@ -769,44 +807,63 @@ async function svLoad(k){
   $(k+"_r").textContent="Showing "+f(r[0])+(r[0].toDateString()===last.toDateString()?"":" to "+f(last));
   $(k+"_o").innerHTML='<p class="empty">Loading…</p>';
   try{const q=await getDocs(query(collection(db,"sales"),where("at",">=",Timestamp.fromDate(r[0])),where("at","<",Timestamp.fromDate(r[1])),orderBy("at","desc")));
-    if(my!==s.req)return;s.rows=q.docs.map(d=>({id:d.id,...d.data()}));svDraw(k)}
+    if(my!==s.req)return;s.rows=q.docs.map(d=>({id:d.id,...d.data()}));
+    if(k==="sr"){try{const q2=await getDocs(query(collection(db,"refunds"),where("at",">=",Timestamp.fromDate(r[0])),where("at","<",Timestamp.fromDate(r[1])),orderBy("at","desc")));s.rf=q2.docs.map(d=>d.data()).filter(rfScope)}catch{s.rf=[]}if(my!==s.req)return}
+    svDraw(k)}
   catch(e){console.error(e);if(my===s.req)$(k+"_o").innerHTML='<p class="empty">Could not load sales. Check your connection and the Firestore rules for the sales collection.</p>'}}
 function svFilter(k,pay=true){
   const m=pay?$(k+"_m").value:"",q=$(k+"_q").value.trim().toLowerCase();
-  return SV[k].rows.filter(r=>(!m||r.payment===m)&&(!q||[r.receiptNo,r.customer,r.by,r.payment,r.note,...(r.items||[]).map(i=>i.name+" "+(i.sku||""))].join(" ").toLowerCase().includes(q)))}
+  return SV[k].rows.filter(r=>inScope(r.shopId)&&(!m||hasPay(r,m))&&(!q||[r.receiptNo,r.customer,r.by,r.payment,r.note,...(r.items||[]).map(i=>i.name+" "+(i.sku||""))].join(" ").toLowerCase().includes(q)))}
 const svTime=r=>r.at?.toDate?r.at.toDate().toLocaleString("en-NG",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}):"";
 const svSum=(a,f)=>money(a.reduce((x,r)=>x+(f(r)||0),0));
 const svMAX=300;
 function rvDraw(){
   const rows=SV.rv.shown=svFilter("rv");
-  $("rv_o").innerHTML=`<p class="hint sv">${rows.length} receipt${rows.length===1?"":"s"}, total ${naira(svSum(rows,r=>r.total))}</p><div class="card tbl">`+(rows.length?`<table class="svt"><tr><th>Date</th><th>Receipt</th><th>Customer</th><th>Items</th><th>Payment</th><th>Total</th><th>By</th><th></th></tr>${rows.slice(0,svMAX).map((r,i)=>`<tr><td>${svTime(r)}</td><td>${esc(r.receiptNo)}</td><td>${esc(r.customer||"—")}</td><td class="it">${(r.items||[]).map(x=>`${esc(x.name)} ×${x.qty}`).join(", ")}</td><td>${esc(r.payment)}</td><td><b>${naira(r.total)}</b></td><td>${esc(r.by)}</td><td><button type="button" class="btn sm ghost" data-rc="${i}">Print</button></td></tr>`).join("")}</table>`+(rows.length>svMAX?`<p class="empty">Showing the first ${svMAX} of ${rows.length}. Narrow the period or search.</p>`:""):'<p class="empty">No receipts found for this period or search.</p>')+"</div>"}
+  $("rv_o").innerHTML=`<p class="hint sv">${rows.length} receipt${rows.length===1?"":"s"}, total ${naira(svSum(rows,r=>r.total))}</p><div class="card tbl">`+(rows.length?`<table class="svt"><tr><th>Date</th><th>Receipt</th><th>Customer</th><th>Items</th><th>Payment</th><th>Total</th><th>By</th><th></th></tr>${rows.slice(0,svMAX).map((r,i)=>`<tr><td>${svTime(r)}</td><td>${esc(r.receiptNo)}</td><td>${esc(r.customer||"—")}</td><td class="it">${(r.items||[]).map(x=>`${esc(x.name)} ×${x.qty}`).join(", ")}</td><td>${esc(r.payment)}</td><td><b>${naira(r.total)}</b></td><td>${esc(r.by)}</td><td><button type="button" class="btn sm ghost" data-rc="${i}">Print</button>${isAdmin()?` <button type="button" class="btn sm ghost" data-rf="${esc(r.receiptNo)}">Refund</button>`:""}</td></tr>`).join("")}</table>`+(rows.length>svMAX?`<p class="empty">Showing the first ${svMAX} of ${rows.length}. Narrow the period or search.</p>`:""):'<p class="empty">No receipts found for this period or search.</p>')+"</div>"}
 function srDraw(){
   const rows=SV.sr.shown=svFilter("sr"),base=svFilter("sr",false),m=$("sr_m").value;
   const rev=svSum(rows,r=>r.total),n=rows.length;
   const st=(l,v,t="b",c="")=>`<div class="stat ${t} ${c}"><small>${l}</small><b>${v}</b><em>&nbsp;</em></div>`;
-  const baseRev=svSum(base,r=>r.total),names=[...new Set([...SV_PAYS,...base.map(r=>r.payment).filter(Boolean)])];
-  const pm=names.map(p=>{const a=base.filter(r=>r.payment===p),v=svSum(a,r=>r.total);
+  const baseRev=svSum(base,r=>r.total),names=[...new Set([...SV_PAYS,...base.flatMap(r=>r.payments?.length?r.payments.map(x=>x.method):[r.payment]).filter(Boolean)])];
+  const pm=names.map(p=>{const a=base.filter(r=>hasPay(r,p)),v=svSum(base,r=>payAmt(r,p));
     return`<button type="button" data-pay="${esc(p)}" class="${m===p?"on":""}"><small>${esc(p)}</small><b>${naira(v)}</b><small>${a.length} sale${a.length===1?"":"s"} · ${baseRev?Math.round(v/baseRev*100):0}%</small></button>`}).join("");
   const staff={};rows.forEach(r=>{const x=staff[r.by||"—"]=staff[r.by||"—"]||{n:0,v:0};x.n++;x.v+=r.total||0});
   const sl=Object.entries(staff).sort((a,b)=>b[1].v-a[1].v);
-  $("sr_o").innerHTML=`<div class="stats">${st("Transactions",n,"p")}${st("Revenue",naira(rev))}${st("Average sale",naira(n?money(rev/n):0))}${st("Discounts given",naira(svSum(rows,r=>r.discount)))}${st("Gross profit",naira(svSum(rows,r=>r.profit)),"p","adm")}</div>
+  $("sr_o").innerHTML=`<div class="stats">${st("Transactions",n,"p")}${st("Revenue",naira(rev))}${st("Average sale",naira(n?money(rev/n):0))}${st("Discounts given",naira(svSum(rows,r=>r.discount)))}${st("Refunds",naira(svSum(SV.sr.rf||[],r=>r.amount)),SV.sr.rf?.length?"warn":"b")}${st("Gross profit (after refunds)",naira(money(svSum(rows,r=>r.profit)-svSum(SV.sr.rf||[],r=>r.profitLost))),"p","adm")}</div>
   <h3>Revenue by payment method <small class="hint">tap one to filter the list</small></h3><div class="pmx">${pm}</div>
   ${sl.length?`<div class="panel" style="margin-bottom:16px;min-height:0"><h4>SALES BY STAFF</h4>${sl.map(([u,x])=>`<div class="li"><span>${esc(u)}<small>${x.n} sale${x.n===1?"":"s"}</small></span><b>${naira(money(x.v))}</b></div>`).join("")}</div>`:""}
-  <div class="card tbl">${n?`<table class="svt"><tr><th>Date</th><th>Receipt</th><th>Customer</th><th>Items</th><th>Payment</th><th>Discount</th><th>Total</th><th>By</th><th></th></tr>${rows.slice(0,svMAX).map((r,i)=>`<tr><td>${svTime(r)}</td><td>${esc(r.receiptNo)}</td><td>${esc(r.customer||"—")}</td><td class="it">${(r.items||[]).map(x=>`${esc(x.name)}<small>${x.qty} ${esc(x.packName||"")} × ${naira(x.unitPrice)}</small>`).join("")}</td><td>${esc(r.payment)}</td><td>${r.discount?naira(r.discount):"—"}</td><td><b>${naira(r.total)}</b></td><td>${esc(r.by)}</td><td><button type="button" class="btn sm ghost" data-rc="${i}">Receipt</button></td></tr>`).join("")}</table>`+(n>svMAX?`<p class="empty">Showing the first ${svMAX} of ${n}. Narrow the period or search.</p>`:""):'<p class="empty">No sales found for this period or search.</p>'}</div>`}
-function salesView(){slTab("pos");slListDraw();slCartDraw();heldDraw();if($("sl_p").value)slFill()}
+  <div class="card tbl">${n?`<table class="svt"><tr><th>Date</th><th>Receipt</th><th>Customer</th><th>Items</th><th>Payment</th><th>Discount</th><th>Total</th><th>By</th><th></th></tr>${rows.slice(0,svMAX).map((r,i)=>`<tr><td>${svTime(r)}</td><td>${esc(r.receiptNo)}</td><td>${esc(r.customer||"—")}</td><td class="it">${(r.items||[]).map(x=>`${esc(x.name)}<small>${x.qty} ${esc(x.packName||"")} × ${naira(x.unitPrice)}</small>`).join("")}</td><td>${esc(r.payment)}</td><td>${r.discount?naira(r.discount):"—"}</td><td><b>${naira(r.total)}</b></td><td>${esc(r.by)}</td><td><button type="button" class="btn sm ghost" data-rc="${i}">Receipt</button>${isAdmin()?` <button type="button" class="btn sm ghost" data-rf="${esc(r.receiptNo)}">Refund</button>`:""}</td></tr>`).join("")}</table>`+(n>svMAX?`<p class="empty">Showing the first ${svMAX} of ${n}. Narrow the period or search.</p>`:""):'<p class="empty">No sales found for this period or search.</p>'}</div>`}
+function salesView(){slTab("pos");slListDraw();slCartDraw();if($("sl_p").value)slFill()}
 // ---- staff accounts (superadmin only)
 const normUser=s=>s.trim().toLowerCase();
 const okUser=s=>/^[a-z0-9._-]{3,20}$/.test(s);
 const USER_ERR="Username must be 3 to 20 characters: letters, numbers, dot, dash or underscore.";
 let U=[];
+const shopNames=u=>u.role==="admin"||u.role==="superadmin"||u.allShops===true||!Array.isArray(u.shops)?"All shops":(u.shops.map(id=>SH.find(s=>s.id===id)?.name).filter(Boolean).join(", ")||"None");
+function stAccessDraw(all=false,sel=[]){
+  $("st_all").checked=all;
+  $("stShops").innerHTML=SH.length?SH.map(s=>`<label><input type="checkbox" class="st_s" value="${s.id}"${sel.includes(s.id)?" checked":""}${all?" disabled":""}> ${esc(s.name)}</label>`).join(""):'<small class="hint">No shops yet. Create them in Settings first.</small>';
+  $("stAccess").hidden=$("st_role").value==="admin"}
+function stFormReset(){$("stForm").reset();$("st_id").value="";$("st_pw").required=true;$("st_pwl").hidden=false;$("st_email").disabled=false;$("st_role").disabled=false;$("stSave").textContent="Create account";$("stCancel").hidden=true;stAccessDraw(false,[])}
+$("st_all").onchange=()=>document.querySelectorAll("#stShops input").forEach(i=>{i.disabled=$("st_all").checked;if($("st_all").checked)i.checked=false});
+$("st_role").onchange=()=>{$("stAccess").hidden=$("st_role").value==="admin"};
+$("stCancel").onclick=stFormReset;
 async function staffView(){
   const s=await getDocs(collection(db,"users"));
   U=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>String(a.name||a.email||"").localeCompare(String(b.name||b.email||"")));
-  $("stList").innerHTML=U.length?"<table><tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Status</th><th></th></tr>"+U.map(u=>{const me=u.id===user.uid,off=u.active===false;
-    return `<tr><td>${esc(u.name||"—")}</td><td>${esc(u.username||"—")}</td><td>${esc(u.synthetic?"(none)":u.email||"—")}</td><td>${esc(u.role)}</td>
+  if(!$("st_id").value)stAccessDraw($("st_all").checked,[...document.querySelectorAll("#stShops input:checked")].map(i=>i.value));
+  $("stList").innerHTML=U.length?"<table><tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Shops</th><th>Status</th><th></th></tr>"+U.map(u=>{const me=u.id===user.uid,off=u.active===false;
+    return `<tr><td>${esc(u.name||"—")}</td><td>${esc(u.username||"—")}</td><td>${esc(u.synthetic?"(none)":u.email||"—")}</td><td>${esc(u.role)}</td><td style="white-space:normal">${esc(shopNames(u))}</td>
     <td><span class="tag ${off?"t-bad":"t-ok"}">${off?"Deactivated":"Active"}</span></td>
-    <td>${!u.username?`<button class="btn sm ghost" data-un="${u.id}">Set username</button> `:""}${u.email&&!u.synthetic?`<button class="btn sm ghost" data-rs="${u.id}">Reset password email</button> `:""}${me?"You":`<button class="btn sm ghost" data-tg="${u.id}">${off?"Reactivate":"Deactivate"}</button>`}</td></tr>`}).join("")+"</table>":'<p class="empty">No accounts yet.</p>';
+    <td><button class="btn sm ghost" data-ed="${u.id}">Edit</button> ${!u.username?`<button class="btn sm ghost" data-un="${u.id}">Set username</button> `:""}${u.email&&!u.synthetic?`<button class="btn sm ghost" data-rs="${u.id}">Reset password email</button> `:""}${me?"You":`<button class="btn sm ghost" data-tg="${u.id}">${off?"Reactivate":"Deactivate"}</button>`}</td></tr>`}).join("")+"</table>":'<p class="empty">No accounts yet.</p>';
   const q=a=>$("stList").querySelectorAll(a);
+  q("[data-ed]").forEach(b=>b.onclick=()=>{const u=U.find(x=>x.id===b.dataset.ed);
+    $("st_id").value=u.id;$("st_name").value=u.name||"";$("st_user").value=u.username||"";$("st_email").value=u.synthetic?"":u.email||"";$("st_email").disabled=true;
+    $("st_pw").required=false;$("st_pw").value="";$("st_pwl").hidden=true;
+    $("st_role").value=u.role==="admin"?"admin":"staff";$("st_role").disabled=u.role==="superadmin"||u.id===user.uid;
+    const all=u.allShops===true||!Array.isArray(u.shops);stAccessDraw(all,all?[]:u.shops);
+    if(u.role==="superadmin")$("stAccess").hidden=true;
+    $("stSave").textContent="Save changes";$("stCancel").hidden=false;scrollTo(0,0)});
   q("[data-tg]").forEach(b=>b.onclick=()=>guard(b,async()=>{
     const u=U.find(x=>x.id===b.dataset.tg),off=u.active!==false;
     if(!confirm(`${off?"Deactivate":"Reactivate"} ${u.name||u.username||u.email}?`))return;
@@ -824,28 +881,32 @@ async function staffView(){
     await staffView();toast("Username saved")}));
 }
 $("stForm").onsubmit=e=>{e.preventDefault();guard($("stSave"),async()=>{
-  const name=$("st_name").value.trim(),un=normUser($("st_user").value),em=$("st_email").value.trim().toLowerCase(),pw=$("st_pw").value,rl=$("st_role").value;
-  if(!name)throw new Error("Enter the full name.");
+  const id=$("st_id").value,name=$("st_name").value.trim(),un=normUser($("st_user").value),em=$("st_email").value.trim().toLowerCase(),pw=$("st_pw").value,rl=$("st_role").value;
   if(!okUser(un))throw new Error(USER_ERR);
+  const all=rl==="admin"||$("st_all").checked,shops=all?[]:[...document.querySelectorAll("#stShops input:checked")].map(i=>i.value);
+  if(!all&&SH.length&&!shops.length)throw new Error("Tick at least one shop, or tick All shops.");
+  const access={allShops:all,shops};
+  if(id){
+    const u=U.find(x=>x.id===id);if(!u)throw new Error("Account not found.");
+    const sup=u.role==="superadmin",upd=sup?{name,allShops:true,shops:[]}:{name,role:rl,...access},changed=un!==(u.username||"");
+    if(changed)upd.username=un;
+    await runTx(async t=>{
+      if(changed&&(await t.get(doc(db,"usernames",un))).exists())throw new Error("That username is taken.");
+      if(changed){if(u.username)t.delete(doc(db,"usernames",u.username));t.set(doc(db,"usernames",un),{uid:u.id,email:u.email})}
+      t.update(doc(db,"users",u.id),upd)});
+    stFormReset();await staffView();toast("Account updated");return}
   if(pw.length<6)throw new Error("Password must be at least 6 characters.");
   if((await getDoc(doc(db,"usernames",un))).exists())throw new Error("That username is taken.");
   const synthetic=!em,email=em||`${un}@staff.derhymes.app`;
   let uid;
-  try{
-    try{uid=(await createUserWithEmailAndPassword(auth2,email,pw)).user.uid}
-    catch(err){
-      if(err.code!=="auth/email-already-in-use")throw new Error(err.code==="auth/weak-password"?"Password is too weak.":err.code==="auth/invalid-email"?"That email is not valid.":(err.message||err.code));
-      // a login left over from an earlier failed attempt: reuse it if the profile was never saved
-      try{uid=(await signInWithEmailAndPassword(auth2,email,pw)).user.uid}
-      catch{throw new Error("That email already has an account.")}
-      if((await getDoc(doc(db,"users",uid))).exists())throw new Error("That email already has an account.")}
-  }finally{await signOut(auth2).catch(()=>{})}
-  try{
-    await runTx(async t=>{
-      t.set(doc(db,"users",uid),{name,username:un,email,synthetic,role:rl,active:true,createdAt:serverTimestamp()});
-      t.set(doc(db,"usernames",un),{uid,email})})}
-  catch(err){console.error(err);throw new Error("The login was created but the profile could not be saved ("+(err.code||err.message)+"). Fix the Firestore rules, then press Create account again with the same details.")}
-  $("stForm").reset();await staffView();toast("Account created")})};
+  try{uid=(await createUserWithEmailAndPassword(auth2,email,pw)).user.uid}
+  catch(err){throw new Error(err.code==="auth/email-already-in-use"?"That email already has an account.":err.message)}
+  finally{await signOut(auth2).catch(()=>{})}
+  await runTx(async t=>{
+    t.set(doc(db,"users",uid),{name,username:un,email,synthetic,role:rl,...access,active:true,createdAt:serverTimestamp()});
+    t.set(doc(db,"usernames",un),{uid,email})});
+  stFormReset();await staffView();toast("Account created")})};
+
 // ---- biometric login (WebAuthn + PRF). The password is stored encrypted on this device only.
 const BIO_KEY="dr_bio_v1",bu8=s=>Uint8Array.from(atob(s.replace(/-/g,"+").replace(/_/g,"/")),c=>c.charCodeAt(0));
 const b64=u=>btoa(String.fromCharCode(...new Uint8Array(u)));
@@ -904,3 +965,170 @@ window.addEventListener("online",async()=>{netUi(true);
   try{await waitForPendingWrites(db);toast("Back online. Everything is synced.")}catch(e){console.error(e)}
   netUi();try{await load()}catch{}});
 netUi();
+// ================= split payments =================
+const PAYM=["Cash","Transfer","POS","Credit (pay later)"];
+function payRow(m="Cash",amt=""){const d=document.createElement("div");d.className="payrow";
+  d.innerHTML=`<select class="py_m">${PAYM.map(x=>`<option${x===m?" selected":""}>${esc(x)}</option>`).join("")}</select><input class="py_a" type="number" min="0" step="0.01" placeholder="Amount (₦)" value="${esc(amt)}"><button type="button" class="btn ghost sm py_x" aria-label="Remove payment">×</button>`;
+  $("slPays").append(d);payUi()}
+function payUi(){const rs=document.querySelectorAll("#slPays .payrow");
+  rs.forEach(r=>r.querySelector(".py_x").hidden=rs.length<2);
+  if(rs[0])rs[0].querySelector(".py_a").placeholder=rs.length<2?"Amount (blank = full total)":"Amount (₦)"}
+function payReset(){$("slPays").innerHTML="";payRow()}
+function readPays(total){
+  const rs=[...document.querySelectorAll("#slPays .payrow")].map(r=>({method:r.querySelector(".py_m").value,raw:r.querySelector(".py_a").value,amount:money(parseFloat(r.querySelector(".py_a").value)||0)}));
+  if(rs.length===1&&rs[0].raw==="")rs[0].amount=total;
+  return rs}
+$("slAddPay").onclick=()=>{payRow("Transfer");slSum()};
+$("slPays").addEventListener("click",e=>{const x=e.target.closest(".py_x");if(x){x.closest(".payrow").remove();payUi();slSum()}});
+function payAmt(r,p){return r.payments?.length?money(r.payments.filter(x=>x.method===p).reduce((s,x)=>s+x.amount,0)):(r.payment===p?(r.total||0):0)}
+function hasPay(r,p){return payAmt(r,p)>0||r.payment===p}
+function payTxt(s){
+  const ch=s.change?`<tr><td>Change</td><td>${naira(s.change)}</td></tr>`:"";
+  return s.payments?.length>1?s.payments.map(p=>`<tr><td>Paid by ${esc(p.method)}</td><td>${naira(p.amount)}</td></tr>`).join("")+ch:`<tr><td>Paid by</td><td>${esc(s.payment)}</td></tr>`+ch}
+payReset();
+
+// ================= returns and refunds (admins) =================
+let RFS=null;
+const rfRatio=s=>s.subtotal>0?s.total/s.subtotal:1;
+async function rfView(){
+  $("slRf").innerHTML=`<div class="card grid"><label>Find a receipt<input id="rf_q" placeholder="Receipt number, e.g. S20260101-ABCD" autocomplete="off"></label><div class="row"><button type="button" id="rf_go" class="btn">Find sale</button></div></div><div id="rf_sale"></div><div id="rf_list" class="card tbl"></div>`;
+  $("rf_go").onclick=()=>rfFind($("rf_q").value);
+  $("rf_q").onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();rfFind($("rf_q").value)}};
+  RFS=null;await rfHistory()}
+async function rfHistory(){
+  try{const q=await getDocs(query(collection(db,"refunds"),orderBy("at","desc"),limit(200))),rows=q.docs.map(d=>d.data()).filter(rfScope).slice(0,50);
+    $("rf_list").innerHTML="<h4>RECENT REFUNDS</h4>"+(rows.length?`<table><tr><th>Date</th><th>Refund</th><th>Receipt</th><th>Items</th><th>Reason</th><th>Method</th><th>Amount</th><th>By</th></tr>${rows.map(r=>`<tr><td>${svTime(r)}</td><td>${esc(r.refundNo)}</td><td>${esc(r.receiptNo)}</td><td style="white-space:normal">${(r.items||[]).map(i=>`${esc(i.name)} ×${i.qty}${i.restocked?"":" (damaged)"}`).join(", ")}</td><td>${esc(r.reason)}</td><td>${esc(r.method)}</td><td><b>${naira(r.amount)}</b></td><td>${esc(r.by)}</td></tr>`).join("")}</table>`:'<p class="empty">No refunds yet.</p>')}
+  catch(e){console.error(e);$("rf_list").innerHTML='<h4>RECENT REFUNDS</h4><p class="empty">Could not load refunds. Check the Firestore rules for the refunds collection.</p>'}}
+async function rfFind(no){
+  no=String(no||"").trim().toUpperCase();if(!no)return;
+  let s;
+  try{s=await getDocs(query(collection(db,"sales"),where("receiptNo","==",no)))}
+  catch(e){console.error(e);toast("Could not look up that receipt: "+(e.code||e.message),true);return}
+  if(s.empty){$("rf_sale").innerHTML='<p class="err">No sale found with that receipt number.</p>';RFS=null;return}
+  const sale={id:s.docs[0].id,...s.docs[0].data()},ret={};let refunded=0;
+  if(shop&&sale.shopId&&sale.shopId!==shop){$("rf_sale").innerHTML='<p class="err">That receipt belongs to another shop. Switch to that shop (or All shops) in the left menu to refund it.</p>';RFS=null;return}
+  try{const r=await getDocs(query(collection(db,"refunds"),where("saleId","==",sale.id)));
+    r.docs.forEach(d=>{const x=d.data();refunded+=x.amount||0;(x.items||[]).forEach(i=>ret[i.idx]=r6((ret[i.idx]||0)+i.qty))})}
+  catch(e){console.error(e);toast("Could not read earlier refunds ("+(e.code||e.message)+"). Check the Firestore rules for refunds.",true);return}
+  RFS={sale,ret,refunded:money(refunded)};rfDraw()}
+function rfDraw(){
+  const {sale,ret,refunded}=RFS;
+  $("rf_sale").innerHTML=`<div class="card tbl"><h4>RECEIPT ${esc(sale.receiptNo)} · ${svTime(sale)} · ${naira(sale.total)} · ${esc(sale.payment)}${sale.customer?" · "+esc(sale.customer):""}</h4>
+  <table><tr><th>Item</th><th>Sold</th><th>Already returned</th><th>Return qty</th><th>Condition</th></tr>${sale.items.map((i,k)=>{const left=r6(i.qty-(ret[k]||0));
+    return`<tr data-k="${k}"><td>${esc(i.name)}<small class="hint">${esc(i.packName)} @ ${naira(i.unitPrice)}</small></td><td>${i.qty}</td><td>${ret[k]||0}</td><td><input class="rf_q" type="number" min="0" max="${left}" step="any" value="0"${left<=0?" disabled":""}></td><td><select class="rf_c"><option value="ok">Resellable, put back in stock</option><option value="bad">Damaged, do not restock</option></select></td></tr>`}).join("")}</table></div>
+  <div class="card grid">
+    <label>Refund method<select id="rf_m"><option>Cash</option><option>Transfer</option><option>POS</option><option>None (exchange or credit note)</option></select></label>
+    <label>Reason<select id="rf_r"><option>Customer changed mind</option><option>Wrong item</option><option>Defective or damaged</option><option>Expired product</option><option>Overcharged</option><option>Other</option></select></label>
+    <label>Note <small>required if reason is Other</small><input id="rf_n"></label>
+    <label>Refund amount (₦) <small>auto-calculated from returned items after any discount, you can edit it</small><input id="rf_a" type="number" min="0" step="0.01"></label>
+    <div class="row"><button type="button" id="rf_do" class="btn">Process refund</button></div>
+  </div><p class="hint">${refunded?`Already refunded on this receipt: ${naira(refunded)}. `:""}Resellable items go back into the batches they were sold from.</p>`;
+  $("rf_sale").oninput=e=>{if(e.target.classList.contains("rf_q"))rfCalc()};
+  $("rf_do").onclick=()=>guard($("rf_do"),rfSubmit)}
+function rfCalc(){const {sale}=RFS;let v=0;
+  document.querySelectorAll("#rf_sale tr[data-k]").forEach(tr=>{v+=(parseFloat(tr.querySelector(".rf_q").value)||0)*sale.items[+tr.dataset.k].unitPrice});
+  $("rf_a").value=money(v*rfRatio(sale))||""}
+async function rfSubmit(){
+  if(!isAdmin())throw new Error("Only admins can process refunds.");
+  const {sale,ret,refunded}=RFS;
+  const lines=[...document.querySelectorAll("#rf_sale tr[data-k]")].map(tr=>({k:+tr.dataset.k,q:parseFloat(tr.querySelector(".rf_q").value)||0,ok:tr.querySelector(".rf_c").value==="ok"})).filter(l=>l.q>0);
+  if(!lines.length)throw new Error("Enter the quantity being returned for at least one item.");
+  for(const l of lines){const i=sale.items[l.k],left=r6(i.qty-(ret[l.k]||0));if(l.q>left+1e-9)throw new Error(`You can only return ${left} more of ${i.name}.`)}
+  const amount=money(num("rf_a")),reason=$("rf_r").value,note=$("rf_n").value.trim(),method=$("rf_m").value;
+  if(amount<0)throw new Error("Refund amount cannot be negative.");
+  const room=money(sale.total-refunded);
+  if(amount>room+0.01)throw new Error(`Refund cannot be more than ${naira(room)}, the amount left on this receipt.`);
+  if(reason==="Other"&&!note)throw new Error("Add a note explaining the refund.");
+  if(!confirm(`Refund ${naira(amount)} (${method}) for receipt ${sale.receiptNo}?`))return;
+  // work out which batches the returned goods go back to (sold minus already returned, per batch)
+  const mq=await getDocs(query(collection(db,"movements"),where("saleId","==",sale.id))),cap={};
+  mq.docs.forEach(d=>{const m=d.data();if(m.batchId){const key=m.productId+"|"+m.batchId;cap[key]=r6((cap[key]||0)-m.qty)}});
+  const refundNo="R"+slNo().slice(1),plan=[],items=[];let costBack=0,writeOff=0;
+  for(const l of lines){const i=sale.items[l.k],base=r6(l.q*i.packQty),cost=(prodOf(i.productId)?.cost||0)*base;
+    if(l.ok){costBack+=cost;let need=base;
+      for(const key of Object.keys(cap)){if(need<=0)break;const [pid,bid]=key.split("|");if(pid!==i.productId||cap[key]<=0)continue;
+        const take=Math.min(need,cap[key]);cap[key]=r6(cap[key]-take);need=r6(need-take);plan.push({pid,bid,qty:take})}
+      if(need>0)plan.push({pid:i.productId,bid:null,qty:need})}
+    else writeOff+=cost;
+    items.push({idx:l.k,productId:i.productId,name:i.name,sku:i.sku||"",unit:i.unit,packName:i.packName,packQty:i.packQty,qty:l.q,baseQty:base,unitPrice:i.unitPrice,lineTotal:money(l.q*i.unitPrice),restocked:l.ok})}
+  costBack=money(costBack);writeOff=money(writeOff);
+  const rref=doc(collection(db,"refunds")),pids=[...new Set(plan.map(x=>x.pid))],bids=[...new Set(plan.filter(x=>x.bid).map(x=>x.bid))];
+  await runTx(async t=>{
+    const PD={},BT={};
+    for(const pid of pids){const s=await t.get(doc(db,"products",pid));if(!s.exists())throw new Error("A returned product no longer exists.");PD[pid]={ref:s.ref,stock:s.data().stock}}
+    for(const id of bids){const s=await t.get(doc(db,"batches",id));BT[id]=s.exists()?{ref:s.ref,left:s.data().qtyRemaining}:null}
+    plan.forEach(x=>{PD[x.pid].stock=r6(PD[x.pid].stock+x.qty);const b=x.bid&&BT[x.bid];if(b)b.left=r6(b.left+x.qty);
+      t.set(doc(collection(db,"movements")),{productId:x.pid,batchId:b?x.bid:null,qty:x.qty,reason:"Return",note:`Refund ${refundNo} for ${sale.receiptNo}`,ref:refundNo,saleId:sale.id,by:user.email,at:serverTimestamp()})});
+    pids.forEach(pid=>t.update(PD[pid].ref,{stock:PD[pid].stock,updatedAt:serverTimestamp()}));
+    Object.values(BT).forEach(b=>{if(b)t.update(b.ref,{qtyRemaining:b.left})});
+    t.set(rref,{refundNo,shopId:sale.shopId||shop||"",saleId:sale.id,receiptNo:sale.receiptNo,customer:sale.customer||"",items,amount,method,reason,note,costBack,writeOff,profitLost:money(amount-costBack),by:user.email,at:serverTimestamp()})});
+  await load();toast(`Refund ${refundNo} recorded: ${naira(amount)}`);
+  await rfFind(sale.receiptNo);rfHistory()}
+
+// ================= analytics (admins) =================
+let anReq=0;
+function anView(){
+  if(!$("an_p")){$("analytics").innerHTML=`<div class="card grid"><label>Period<select id="an_p"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last 12 months</option></select></label></div><p class="hint">Profit per product is estimated using each product's current average cost. Totals use the exact profit saved with every sale.</p><div id="an_o"></div>`;
+    $("an_p").onchange=anLoad}
+  anLoad()}
+async function anLoad(){
+  const days=+$("an_p").value,now=new Date(),from=new Date(now.getFullYear(),now.getMonth(),now.getDate()-days+1),my=++anReq;
+  $("an_o").innerHTML='<p class="empty">Loading…</p>';
+  try{const q=c=>getDocs(query(collection(db,c),where("at",">=",Timestamp.fromDate(from)),orderBy("at","desc")));
+    const [s,r,m]=await Promise.all([q("sales"),q("refunds").catch(()=>({docs:[]})),q("movements")]);
+    if(my!==anReq)return;
+    anDraw(s.docs.map(d=>d.data()).filter(x=>inScope(x.shopId)),r.docs.map(d=>d.data()).filter(rfScope),m.docs.map(d=>d.data()).filter(x=>!shop||prodOf(x.productId)),days)}
+  catch(e){console.error(e);if(my===anReq)$("an_o").innerHTML='<p class="empty">Could not load analytics. Check your connection and Firestore rules.</p>'}}
+function anDraw(S,R,M,days){
+  const cost=p=>prodOf(p)?.cost||0,A={},g=id=>A[id]=A[id]||{u:0,rev:0,cost:0};
+  S.forEach(x=>{const k=rfRatio(x);(x.items||[]).forEach(i=>{const a=g(i.productId);a.u+=i.baseQty;a.rev+=i.lineTotal*k;a.cost+=cost(i.productId)*i.baseQty})});
+  R.forEach(x=>{const tl=(x.items||[]).reduce((s,i)=>s+i.lineTotal,0)||1;(x.items||[]).forEach(i=>{const a=g(i.productId);a.u-=i.baseQty;a.rev-=x.amount*i.lineTotal/tl;if(i.restocked)a.cost-=cost(i.productId)*i.baseQty})});
+  const rows=P.map(p=>{const a=A[p.id]||{u:0,rev:0,cost:0},rate=a.u/days,profit=a.rev-a.cost;
+    return{p,u:r6(a.u),rev:a.rev,profit,margin:a.rev>0?profit/a.rev*100:null,rate,left:rate>0?p.stock/rate:Infinity}});
+  const sold=rows.filter(r=>r.u>0),dead=rows.filter(r=>r.u<=0&&r.p.stock>0);
+  const rev=svSum(S,x=>x.total)-svSum(R,x=>x.amount),prof=svSum(S,x=>x.profit)-svSum(R,x=>x.profitLost),units=r6(sold.reduce((s,r)=>s+r.u,0));
+  // damages and other removals
+  const LOSS=["Damaged","Expired","Missing","Theft or loss"],dm={},dp={};
+  M.filter(x=>x.qty<0&&x.reason!=="Sale").forEach(x=>{const v=-x.qty*cost(x.productId),d=dm[x.reason]=dm[x.reason]||{u:0,v:0};d.u+=-x.qty;d.v+=v;
+    if(LOSS.includes(x.reason)){const q=dp[x.productId]=dp[x.productId]||{u:0,v:0};q.u+=-x.qty;q.v+=v}});
+  R.forEach(x=>(x.items||[]).filter(i=>!i.restocked).forEach(i=>{const v=cost(i.productId)*i.baseQty,d=dm["Returned damaged"]=dm["Returned damaged"]||{u:0,v:0};d.u+=i.baseQty;d.v+=v;
+    const q=dp[i.productId]=dp[i.productId]||{u:0,v:0};q.u+=i.baseQty;q.v+=v}));
+  const lossVal=money(Object.entries(dm).filter(([k])=>LOSS.includes(k)||k==="Returned damaged").reduce((s,[,d])=>s+d.v,0));
+  // expiry
+  const lb=live(B).filter(b=>b.expiry),ex=lb.filter(b=>daysTo(b)<0),sn=lb.filter(b=>daysTo(b)>=0&&daysTo(b)<=batchWindow(b)),bv=a=>money(a.reduce((s,b)=>s+b.qtyRemaining*(b.unitCost||0),0));
+  // weekday revenue, payment mix, categories
+  const wd=Array(7).fill(0);S.forEach(x=>{const t=x.at?.toDate();if(t)wd[t.getDay()]+=x.total||0});
+  const cat={};rows.forEach(r=>{const c=cat[r.p.category||"—"]=cat[r.p.category||"—"]||{rev:0,profit:0};c.rev+=r.rev;c.profit+=r.profit});
+  const st=(l,v,sub,t="b",c="")=>`<div class="stat ${t} ${c}"><small>${l}</small><b>${v}</b><em>${sub||"&nbsp;"}</em></div>`;
+  const pn=(h,body,w)=>`<div class="panel${w?" wide":""}"><h4>${h}</h4>${body||'<p class="empty">Nothing to show.</p>'}</div>`;
+  const li=(a,f)=>a.map(f).join("");
+  const dl=r=>isFinite(r.left)?(r.left<1?"under 1 day":Math.round(r.left)+" days"):"—";
+  const fast=[...sold].sort((a,b)=>b.u-a.u).slice(0,8);
+  const reorder=sold.filter(r=>r.left<=14).sort((a,b)=>a.left-b.left).slice(0,8);
+  const slow=rows.filter(r=>r.p.stock>0).sort((a,b)=>a.u-b.u).slice(0,8);
+  const top=[...sold].sort((a,b)=>b.profit-a.profit).slice(0,8);
+  const low=[...sold].sort((a,b)=>(a.margin??-999)-(b.margin??-999)).slice(0,8);
+  const pays=PAYM.map(m=>[m,svSum(S,x=>payAmt(x,m))]).filter(x=>x[1]>0),pmax=Math.max(1,...pays.map(x=>x[1]));
+  const dmRows=Object.entries(dm).sort((a,b)=>b[1].v-a[1].v),dpRows=Object.entries(dp).sort((a,b)=>b[1].v-a[1].v).slice(0,6);
+  $("an_o").innerHTML=`<div class="stats">
+    ${st("Net revenue",naira(rev),`${S.length} sales, ${R.length} refund${R.length===1?"":"s"}`,"p")}
+    ${st("Gross profit",naira(prof),rev>0?(prof/rev*100).toFixed(1)+"% margin":"","p")}
+    ${st("Units sold",units.toLocaleString("en-NG"),(units/days).toFixed(1)+" per day")}
+    ${st("Average sale",naira(S.length?money(svSum(S,x=>x.total)/S.length):0),"per transaction")}
+    ${st("Refunds",naira(svSum(R,x=>x.amount)),"money returned to customers",R.length?"warn":"b")}
+    ${st("Damages and losses",naira(lossVal),"at cost price",lossVal?"bad":"b")}
+    ${st("Dead stock",dead.length+" products",naira(dead.reduce((s,r)=>s+r.p.stock*r.p.cost,0))+" tied up, no sales",dead.length?"warn":"b")}
+    ${st("Expiry at risk",naira(bv(ex)+bv(sn)),`${ex.length} expired, ${sn.length} expiring soon`,ex.length?"bad":sn.length?"warn":"b")}
+  </div>
+  <div class="cols">
+  ${pn("FAST-SELLING PRODUCTS",li(fast,r=>`<div class="li"><span>${esc(r.p.name)}<small>${r.u} ${esc(r.p.unit)} sold · ${r.rate.toFixed(1)}/day · ${r.p.stock} left</small></span><b>${naira(r.rev)}</b></div>`))}
+  ${pn("RESTOCK SOON (14 days or less of stock)",li(reorder,r=>`<div class="li"><span>${esc(r.p.name)}<small>${r.rate.toFixed(1)} ${esc(r.p.unit)}/day · ${r.p.stock} left</small></span><span class="tag ${r.p.stock<=0?"t-bad":"t-warn"}">${r.p.stock<=0?"Out":dl(r)}</span></div>`))}
+  ${pn("SLOW AND DEAD STOCK",li(slow,r=>`<div class="li"><span>${esc(r.p.name)}<small>${r.u>0?r.u+" sold":"No sales"} in ${days} days · ${r.p.stock} ${esc(r.p.unit)} in stock</small></span><b>${naira(r.p.stock*r.p.cost)}</b></div>`))}
+  ${pn("HIGHEST PROFIT PRODUCTS",li(top,r=>`<div class="li"><span>${esc(r.p.name)}<small>${r.u} ${esc(r.p.unit)} sold · ${r.margin==null?"—":r.margin.toFixed(1)+"% margin"}</small></span><b class="pos">${naira(r.profit)}</b></div>`))}
+  ${pn("LOWEST MARGIN PRODUCTS",li(low,r=>`<div class="li"><span>${esc(r.p.name)}<small>${r.u} ${esc(r.p.unit)} sold · profit ${naira(r.profit)}</small></span><span class="tag ${r.margin==null||r.margin<10?"t-bad":"t-warn"}">${r.margin==null?"—":r.margin.toFixed(1)+"%"}</span></div>`))}
+  ${pn("DAMAGES AND OTHER REMOVALS",li(dmRows,([k,d])=>`<div class="li"><span>${esc(k)}<small>${r6(d.u)} units</small></span><b class="${LOSS.includes(k)||k==="Returned damaged"?"neg":""}">${naira(money(d.v))}</b></div>`)+(dpRows.length?`<p class="hint" style="margin-top:10px">Most damaged or lost products</p>`+li(dpRows,([id,d])=>`<div class="li"><span>${esc(prodOf(id)?.name||"Archived product")}<small>${r6(d.u)} units</small></span><b class="neg">${naira(money(d.v))}</b></div>`):""))}
+  ${pn("EXPIRY WATCH",li([...ex,...sn].sort((a,b)=>daysTo(a)-daysTo(b)).slice(0,8),b=>`<div class="li"><span>${esc(prodOf(b.productId)?.name||"Archived")}<small>Batch ${esc(b.batchNo)} · ${b.qtyRemaining} left · ${naira(money(b.qtyRemaining*(b.unitCost||0)))} at cost</small></span><span class="tag ${daysTo(b)<0?"t-bad":"t-warn"}">${daysTo(b)<0?"Expired":daysTo(b)+" days"}</span></div>`))}
+  ${pn("REVENUE BY WEEKDAY",chart([wd.map(v=>Math.round(v))]))}
+  ${pn("PAYMENT METHODS",pays.map(([m,v])=>`<div class="pb"><div><span>${esc(m)}</span><span>${naira(v)}</span></div><div class="pbar"><i style="width:${v/pmax*100}%"></i></div></div>`).join(""))}
+  ${pn("PERFORMANCE BY CATEGORY",Object.entries(cat).sort((a,b)=>b[1].rev-a[1].rev).map(([c,v])=>`<div class="li"><span>${esc(c)}<small>profit ${naira(money(v.profit))}</small></span><b>${naira(money(v.rev))}</b></div>`).join(""),true)}
+  </div>`}

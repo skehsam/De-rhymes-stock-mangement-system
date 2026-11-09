@@ -1,16 +1,36 @@
-rules_version='2';
-service cloud.firestore { match /databases/{db}/documents {
-  function role(){return get(/databases/$(db)/documents/users/$(request.auth.uid)).data.role}
-  function ok(){return request.auth!=null && exists(/databases/$(db)/documents/users/$(request.auth.uid))}
-  function admin(){return ok() && role() in ['admin','superadmin']}
-  match /users/{u}{allow read:if request.auth!=null&&(request.auth.uid==u||admin()); allow write:if ok()&&role()=='superadmin'}
-  match /categories/{c}{allow read:if ok(); allow write:if admin()}
-  match /settings/{s}{allow read:if ok(); allow write:if admin()}
-  match /products/{p}{allow read:if ok(); allow delete:if false;
-    allow create:if admin()||(ok()&&request.resource.data.price==0);
-    allow update:if admin()||(ok()&&request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock','cost','price','category','updatedAt']))}
-  match /batches/{b}{allow read,create,update:if ok(); allow delete:if false}
-  match /movements/{m}{allow read:if ok(); allow create:if admin()||(ok()&&request.resource.data.reason in ['Stock in','Sale']); allow update,delete:if false}
-  match /sales/{s}{allow read,create:if ok(); allow update,delete:if false}
-  match /priceChanges/{c}{allow read,create:if admin(); allow update,delete:if false}
-}}
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function isSuper() { return signedIn() && me().role == 'superadmin'; }
+    function isAdmin() { return signedIn() && me().role in ['admin','superadmin']; }
+
+    // staff accounts
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create, update, delete: if isSuper();
+    }
+
+    // username -> email lookup (must be readable before login)
+    match /usernames/{name} {
+      allow read: if true;
+      allow create, update, delete: if isSuper();
+    }
+
+    match /products/{id}    { allow read, write: if signedIn(); }
+    match /batches/{id}     { allow read, write: if signedIn(); }
+    match /movements/{id}   { allow read, create: if signedIn(); }
+    match /sales/{id}       { allow read, create: if signedIn(); }
+    match /priceChanges/{id}{ allow read, create: if signedIn(); }
+
+    // refunds: everyone signed in can read (the Sales report subtracts refunds),
+    // only admins can create, and nobody can edit or delete a refund afterwards
+    match /refunds/{id}     { allow read: if signedIn(); allow create: if isAdmin(); }
+
+    match /categories/{id}  { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /shops/{id}       { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /settings/{id}    { allow read: if signedIn(); allow write: if isAdmin(); }
+  }
+}
