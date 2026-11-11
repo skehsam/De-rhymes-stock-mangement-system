@@ -1,4 +1,4 @@
-const V="dr-v4",SHELL=["./","index.html","styles.css","app.js","firebase-config.js","logo.png"];
+const V="dr-v5",SHELL=["./","index.html","styles.css","app.js","firebase-config.js","logo.png"];
 const CDN=["www.gstatic.com","fonts.googleapis.com","fonts.gstatic.com"];
 self.addEventListener("install",e=>e.waitUntil(caches.open(V).then(c=>Promise.all(SHELL.map(u=>c.add(u).catch(()=>{})))).then(()=>self.skipWaiting())));
 self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==V).map(x=>caches.delete(x)))).then(()=>self.clients.claim())));

@@ -1,6 +1,6 @@
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,signOut,createUserWithEmailAndPassword,sendPasswordResetEmail} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {initializeFirestore,persistentLocalCache,persistentMultipleTabManager,writeBatch,waitForPendingWrites,collection,doc,getDoc,getDocs,query,where,orderBy,limit,runTransaction,serverTimestamp,Timestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {initializeFirestore,persistentLocalCache,persistentMultipleTabManager,writeBatch,waitForPendingWrites,collection,doc,getDoc,getDocs,query,where,orderBy,limit,runTransaction,serverTimestamp,increment,Timestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {firebaseConfig} from "./firebase-config.js";
 
 const app=initializeApp(firebaseConfig),auth=getAuth(app),db=initializeFirestore(app,{localCache:persistentLocalCache({tabManager:persistentMultipleTabManager()})});
@@ -11,13 +11,16 @@ const naira=n=>new Intl.NumberFormat("en-NG",{style:"currency",currency:"NGN"}).
 const cpy=n=>n>0?`<button type="button" class="cpy" data-c="${Math.round(n*100)/100}" title="Copy price" aria-label="Copy price">Copy</button>`:"";
 const num=id=>parseFloat($(id).value)||0;
 const r6=n=>Math.round(n*1e6)/1e6;
+// device time, so an offline sale keeps the time it was really made (serverTimestamp would use the sync time)
+const nowTs=()=>Timestamp.now();
 // Offline-safe transaction. Online: a normal Firestore transaction. Offline: reads come from the device cache,
 // writes are queued in a batch and sent automatically when the connection returns.
 async function runTx(fn){
   if(navigator.onLine){try{return await runTransaction(db,fn)}catch(e){if(e?.code!=="unavailable")throw e}}
   const wb=writeBatch(db),t={get:r=>getDoc(r),set:(r,d)=>(wb.set(r,d),t),update:(r,d)=>(wb.update(r,d),t),delete:r=>(wb.delete(r),t)};
   const out=await fn(t);
-  wb.commit().catch(e=>{console.error(e);toast("An offline change was rejected by the server: "+(e.message||e.code),true)});
+  wb.commit().catch(e=>{console.error(e);toast("An offline change was NOT saved: "+(e.message||e.code),true);
+    alert("WARNING: an offline change was NOT saved on the server ("+(e.code||e.message)+").\n\nThe last sale or stock change made while offline is lost. Please check Sales > Receipts and enter it again.")});
   netUi();return out}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
 let P=[],PA=[],B=[],C=[],cur=null,user=null,role="staff",sort={k:"name",d:1},pf="all";
@@ -29,7 +32,7 @@ const isSuper=()=>role==="superadmin";
 // shops this login may open: admins see all; staff only the shops ticked on their account (accounts made before shop access existed keep all shops until edited)
 const allowedShops=()=>isAdmin()||ACC.all?SH:SH.filter(s=>ACC.shops.includes(s.id));
 // does a record of this shop belong in the current view? With no shop picked only admins (or a system with no shops) see everything
-const inScope=sid=>shop?sid===shop:(isAdmin()||!SH.length);
+const inScope=sid=>shop?(sid===shop||(!sid&&isAdmin())):(isAdmin()||!SH.length);
 const rfScope=x=>shop?(x.shopId?x.shopId===shop:(x.items||[]).some(i=>prodOf(i.productId))):(isAdmin()||!SH.length);
 const titles={dashboard:"Dashboard",products:"Products",stockin:"Receive stock",stockout:"Stock out",movements:"Movements",pricing:"Pricing calculator",expiry:"Batches and expiry",settings:"Settings",product:"Product details",transactions:"Transactions",staff:"Staff accounts",sales:"Sales",analytics:"Analytics"};
 const subs={dashboard:"Today's stock position at a glance.",products:"Search, edit and archive the products you sell.",stockin:"Add a new product, or receive a new batch of an existing one.",stockout:"Record sales, damages, losses and corrections.",movements:"Every stock change, newest first.",pricing:"Work out selling prices from cost, markup, margin or category rules.",expiry:"Track batches and what is close to expiring.",settings:"Categories, markup rules and expiry reminders.",product:"Everything about this product in one place.",transactions:"Search any day, week or month and export it as a CSV file.",staff:"Create and manage staff logins.",sales:"Sell products, set prices and discounts. Stock is deducted automatically.",analytics:"How fast products sell, what earns the most, and where you lose money."};
@@ -173,9 +176,9 @@ async function dash(){
   const st=(l,v,sub,c="",tone="b",f="")=>`<div class="stat ${tone} ${c}"${f?` data-f="${f}" tabindex="0" role="button"`:""}><small>${l}</small><b>${v}</b><em>${sub||"&nbsp;"}</em></div>`;
   const cat={};P.forEach(p=>cat[p.category]=(cat[p.category]||0)+p.stock*p.cost);
   const cats=Object.entries(cat).sort((a,b)=>b[1]-a[1]),cmax=Math.max(1,...cats.map(c=>c[1]));
-  const m=await getDocs(query(collection(db,"movements"),orderBy("at","desc"),limit(300)));
-  const mv=m.docs.map(d=>d.data()).filter(x=>!shop||prodOf(x.productId));
   const ws=new Date();ws.setHours(0,0,0,0);ws.setDate(ws.getDate()-ws.getDay());
+  const m=await getDocs(query(collection(db,"movements"),where("at",">=",Timestamp.fromDate(ws)),orderBy("at","desc")));
+  const mv=m.docs.map(d=>d.data()).filter(x=>!shop||prodOf(x.productId));
   const inn=Array(7).fill(0),outq=Array(7).fill(0);
   mv.forEach(x=>{const t=x.at?.toDate();if(!t||t<ws)return;if(x.qty>0)inn[t.getDay()]+=x.qty;else outq[t.getDay()]-=x.qty});
   const pn=id=>esc(prodOf(id)?.name||"Archived product");
@@ -349,7 +352,7 @@ $("pForm").onsubmit=e=>{e.preventDefault();guard($("pSave"),async()=>{
   if(!(d.price>=0)||(wp!==""&&!(d.wholesalePrice>=0)))throw new Error("Prices cannot be negative.");
   if(id){d.cost=parseFloat($("p_cost").value)||0;
     await runTx(async t=>{t.update(doc(db,"products",id),{...d,updatedAt:serverTimestamp()});
-      if(old&&(old.price||0)!==d.price)t.set(doc(collection(db,"priceChanges")),{productId:id,oldPrice:old.price||0,newPrice:d.price,by:user.email,at:serverTimestamp()})});
+      if(old&&(old.price||0)!==d.price)t.set(doc(collection(db,"priceChanges")),{productId:id,oldPrice:old.price||0,newPrice:d.price,by:user.email,at:nowTs()})});
     $("pReset").click();await go("products");toast("Product saved");return}
   // new product: optional opening stock, saved in one atomic transaction
   const q=num("ns_q");
@@ -365,8 +368,8 @@ $("pForm").onsubmit=e=>{e.preventDefault();guard($("pSave"),async()=>{
     t.set(pref,{...d,minStock:5,stock:units,archived:false,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
     if(units>0){const bref=doc(collection(db,"batches"));
       t.set(bref,{productId:pref.id,batchNo:$("ns_b").value.trim(),qtyReceived:units,qtyRemaining:units,unitCost,
-        expiry:$("ns_e").value?Timestamp.fromDate(new Date($("ns_e").value)):null,ref:$("ns_ref").value,receivedAt:serverTimestamp(),by:user.email});
-      t.set(doc(collection(db,"movements")),{productId:pref.id,batchId:bref.id,qty:units,reason:"Stock in",note:$("ns_n").value,ref:$("ns_ref").value,by:user.email,at:serverTimestamp()})}
+        expiry:$("ns_e").value?Timestamp.fromDate(new Date($("ns_e").value)):null,ref:$("ns_ref").value,receivedAt:nowTs(),by:user.email});
+      t.set(doc(collection(db,"movements")),{productId:pref.id,batchId:bref.id,qty:units,reason:"Stock in",note:$("ns_n").value,ref:$("ns_ref").value,by:user.email,at:nowTs()})}
   });
   $("pReset").click();await load();$("p_name").focus();
   toast(units>0?"Product saved and stocked in":"Product saved")})};
@@ -410,10 +413,10 @@ $("inForm").onsubmit=e=>{e.preventDefault();guard($("inForm").querySelector(".bt
     const newStock=r6(p.stock+units);
     const avg=newStock>0?((p.stock*p.cost)+(units*unitCost))/newStock:unitCost; // weighted average cost
     const bref=doc(collection(db,"batches"));
-    t.update(pref,{stock:newStock,cost:Math.round(avg*100)/100,updatedAt:serverTimestamp()});
+    t.update(pref,{stock:increment(units),cost:Math.round(avg*100)/100,updatedAt:serverTimestamp()});
     t.set(bref,{productId:pid,batchNo:$("in_b").value.trim(),qtyReceived:units,qtyRemaining:units,unitCost,
-      expiry:$("in_e").value?Timestamp.fromDate(new Date($("in_e").value)):null,ref:$("in_ref").value,receivedAt:serverTimestamp(),by:user.email});
-    t.set(doc(collection(db,"movements")),{productId:pid,batchId:bref.id,qty:units,reason:"Stock in",note:$("in_n").value,ref:$("in_ref").value,by:user.email,at:serverTimestamp()});
+      expiry:$("in_e").value?Timestamp.fromDate(new Date($("in_e").value)):null,ref:$("in_ref").value,receivedAt:nowTs(),by:user.email});
+    t.set(doc(collection(db,"movements")),{productId:pid,batchId:bref.id,qty:units,reason:"Stock in",note:$("in_n").value,ref:$("in_ref").value,by:user.email,at:nowTs()});
   });
   $("inForm").reset();await load();toast("Stock received")})};
 
@@ -432,17 +435,17 @@ $("outForm").onsubmit=e=>{e.preventDefault();guard($("outForm").querySelector(".
     let need=qty;const upd=[];
     for(const b of bs){if(need<=0)break;const r=doc(db,"batches",b.id),cur=(await t.get(r)).data(),take=Math.min(need,cur.qtyRemaining);
       if(take>0){upd.push([r,r6(cur.qtyRemaining-take),take,b.id]);need=r6(need-take)}}
-    t.update(pref,{stock:r6(p.stock-qty),updatedAt:serverTimestamp()});
+    t.update(pref,{stock:increment(-qty),updatedAt:serverTimestamp()});
     const nt=note+(pk.qty>1?`${note?" · ":""}${q} ${pk.name} (${qty} ${p.unit})`:"");
-    upd.forEach(([r,left,take,bid])=>{t.update(r,{qtyRemaining:left});
-      t.set(doc(collection(db,"movements")),{productId:pid,batchId:bid,qty:-take,reason,note:nt,by:user.email,at:serverTimestamp()})});
-    if(need>0)t.set(doc(collection(db,"movements")),{productId:pid,batchId:null,qty:-need,reason,note:nt,by:user.email,at:serverTimestamp()});
+    upd.forEach(([r,left,take,bid])=>{t.update(r,{qtyRemaining:increment(-take)});
+      t.set(doc(collection(db,"movements")),{productId:pid,batchId:bid,qty:-take,reason,note:nt,by:user.email,at:nowTs()})});
+    if(need>0)t.set(doc(collection(db,"movements")),{productId:pid,batchId:null,qty:-need,reason,note:nt,by:user.email,at:nowTs()});
   });
   $("outForm").reset();await load();toast("Stock out recorded")})};
 
 async function moves(){
-  const m=await getDocs(query(collection(db,"movements"),orderBy("at","desc"),limit(50)));
-  const mrows=m.docs.filter(d=>!shop||prodOf(d.data().productId));
+  const m=await getDocs(query(collection(db,"movements"),orderBy("at","desc"),limit(500)));
+  const mrows=m.docs.filter(d=>!shop||prodOf(d.data().productId)).slice(0,200);
   $("mTable").innerHTML=!mrows.length?'<p class="empty">No movements yet.</p>':"<table><tr><th>Product</th><th>Qty</th><th>Reason</th><th>Note</th><th>By</th><th>When</th></tr>"+mrows.map(d=>{const x=d.data();
     return `<tr><td>${esc(prodOf(x.productId)?.name||"Archived")}</td><td class="${x.qty>0?"pos":"neg"}">${x.qty>0?"+":""}${x.qty}</td><td>${esc(x.reason)}</td><td>${esc(x.note||"")}</td><td>${esc(x.by)}</td><td>${x.at?x.at.toDate().toLocaleString("en-NG"):""}</td></tr>`}).join("")+"</table>"}
 
@@ -488,7 +491,7 @@ function calc(){
     if(warn&&!confirm(warn+" Apply anyway?"))return;
     const packs=packRows.slice(1).map(r=>({name:r.name,qty:r.qty,price:r.price,...(r.wprice!=null?{wholesale:r.wprice}:{})}));
     await runTx(async t=>{t.update(doc(db,"products",p.id),{price:sp,...(sw!=null?{wholesalePrice:sw}:{}),packs,updatedAt:serverTimestamp()});
-      t.set(doc(collection(db,"priceChanges")),{productId:p.id,oldPrice:p.price,newPrice:sp,...(sw!=null?{oldWholesale:p.wholesalePrice??null,newWholesale:sw}:{}),by:user.email,at:serverTimestamp()})});
+      t.set(doc(collection(db,"priceChanges")),{productId:p.id,oldPrice:p.price,newPrice:sp,...(sw!=null?{oldWholesale:p.wholesalePrice??null,newWholesale:sw}:{}),by:user.email,at:nowTs()})});
     await load();calc();toast("Selling prices updated")}));
 }
 $("prForm").addEventListener("input",calc);
@@ -575,7 +578,7 @@ function txDraw(){
   const rows=txRows(),inn=rows.filter(r=>r.qty>0).reduce((s,r)=>s+r.qty,0),out=rows.filter(r=>r.qty<0).reduce((s,r)=>s-r.qty,0);
   const st=(l,v,t="b")=>`<div class="stat ${t}"><small>${l}</small><b>${v}</b><em>&nbsp;</em></div>`;
   $("txSum").innerHTML=st("Transactions",rows.length,"p")+st("Units received",r6(inn).toLocaleString("en-NG"))+st("Units removed",r6(out).toLocaleString("en-NG"))+st("Net change",(inn>=out?"+":"")+r6(inn-out).toLocaleString("en-NG"),"p");
-  const MAX=500;
+  const MAX=1000;
   $("txTable").innerHTML=rows.length?`<table><tr><th>When</th><th>Product</th><th>SKU</th><th>Qty</th><th>Type</th><th>Batch</th><th>Reference</th><th>Note</th><th>By</th></tr>`+
     rows.slice(0,MAX).map(r=>`<tr><td>${r.when?r.when.toLocaleString("en-NG"):""}</td><td>${esc(r.product)}</td><td>${esc(r.sku)}</td><td class="${r.qty>0?"pos":"neg"}">${r.qty>0?"+":""}${r.qty} ${esc(r.unit)}</td><td>${esc(r.reason)}</td><td>${esc(r.batch||"—")}</td><td>${esc(r.ref||"—")}</td><td>${esc(r.note)}</td><td>${esc(r.by)}</td></tr>`).join("")+"</table>"+(rows.length>MAX?`<p class="empty">Showing the first ${MAX} of ${rows.length}. Export the CSV to get all of them.</p>`:""):'<p class="empty">No transactions in this period.</p>'}
 const csvCell=v=>{let s=String(v??"");if(typeof v==="string"&&/^[=+\-@\t\r]/.test(s))s="'"+s;return/[",\n\r]/.test(s)?`"${s.replace(/"/g,'""')}"`:s};
@@ -592,7 +595,7 @@ $("tx_p").onchange=()=>{txToggle();txLoad()};
 ["tx_d","tx_f","tx_t"].forEach(id=>$(id).onchange=txLoad);
 $("tx_r").onchange=txDraw;$("tx_q").oninput=txDraw;$("tx_csv").onclick=txExport;
 // ---- sales: cart, manual price, discount, atomic stock deduction, receipts
-let CART=[];
+let CART=[],saving=false;
 const byExp=(a,b)=>(a.expiry?.seconds??9e12)-(b.expiry?.seconds??9e12);
 const money=n=>Math.round(n*100)/100;
 // default price for the chosen unit; pack prices fall back to base price x pack size
@@ -644,7 +647,7 @@ function slTot(){
   return{sub,disc,total:money(sub-disc)}}
 function slSum(){const T=slTot(),ps=readPays(T.total),paid=money(ps.reduce((s,p)=>s+p.amount,0)),show=ps.length>1||(ps[0]&&ps[0].raw!=="");
   $("slTot").innerHTML=`<div><span>Subtotal</span><b>${naira(T.sub)}</b></div><div><span>Discount</span><b>${T.disc?"− "+naira(T.disc):naira(0)}</b></div><div class="gt"><span>Total</span><span>${naira(T.total)}</span></div>${show?`<div><span>Paid</span><b>${naira(paid)}</b></div><div><span>${paid>=T.total?"Change":"Remaining"}</span><b>${naira(money(Math.abs(paid-T.total)))}</b></div>`:""}`;
-  $("slDone").disabled=!CART.length}
+  $("slDone").disabled=!CART.length||saving}
 function slCartDraw(){
   $("slCart").innerHTML=(CART.length?`<table><tr><th>Item</th><th>Qty</th><th>Price (₦)</th><th>Total</th><th></th></tr>${CART.map((l,i)=>`<tr data-i="${i}"><td>${esc(l.name)}<small class="hint" style="display:block">${esc(l.pname)}${l.mult>1?` (${l.mult} ${esc(l.unit)})`:""}</small></td><td><input class="c_q" type="number" min="0" step="any" value="${l.q}"></td><td><input class="c_p" type="number" min="0" step="0.01" value="${l.price}"></td><td class="c_t">${naira(slLine(l))}</td><td><button type="button" class="btn sm ghost c_x" aria-label="Remove">×</button></td></tr>`).join("")}</table>`:'<p class="empty">The cart is empty. Search a product above and add it.</p>');
   slSum()}
@@ -656,9 +659,9 @@ $("slCheck").addEventListener("input",slSum);
 $("slClear").onclick=()=>{if(CART.length&&!confirm("Clear the whole cart?"))return;CART=[];$("slCheck").reset();payReset();slCartDraw()};
 
 const slNo=()=>{const A="ABCDEFGHJKLMNPQRSTUVWXYZ23456789",d=new Date();
-  return`S${d.getFullYear()}${pad2(d.getMonth()+1)}${pad2(d.getDate())}-`+Array.from({length:4},()=>A[Math.floor(Math.random()*A.length)]).join("")};
+  return`S${d.getFullYear()}${pad2(d.getMonth()+1)}${pad2(d.getDate())}-`+Array.from({length:6},()=>A[Math.floor(Math.random()*A.length)]).join("")};
 
-$("slCheck").onsubmit=e=>{e.preventDefault();guard($("slDone"),async()=>{
+$("slCheck").onsubmit=e=>{e.preventDefault();if(saving)return;saving=true;guard($("slDone"),async()=>{
   if(!CART.length)throw new Error("Add at least one product to the cart.");
   if(CART.some(l=>!(l.q>0)))throw new Error("Every cart line needs a quantity above zero.");
   if(CART.some(l=>!(l.price>0)))throw new Error("Every cart line needs a price above zero.");
@@ -686,7 +689,7 @@ $("slCheck").onsubmit=e=>{e.preventDefault();guard($("slDone"),async()=>{
     const PD={},BT={},pids=[...new Set(CART.map(l=>l.pid))];
     for(const pid of pids){ // all reads first
       const s=await t.get(doc(db,"products",pid));if(!s.exists())throw new Error("A product in the cart no longer exists.");
-      PD[pid]={ref:s.ref,d:s.data(),stock:s.data().stock};BT[pid]=[];
+      PD[pid]={ref:s.ref,d:s.data(),stock:s.data().stock,start:s.data().stock};BT[pid]=[];
       for(const b of B.filter(x=>x.productId===pid&&x.qtyRemaining>0).sort(byExp)){
         const bs=await t.get(doc(db,"batches",b.id));if(bs.exists()&&bs.data().qtyRemaining>0)BT[pid].push({ref:bs.ref,id:b.id,left:bs.data().qtyRemaining,start:bs.data().qtyRemaining})}}
     const mv=[],items=[];let costTotal=0;
@@ -701,15 +704,17 @@ $("slCheck").onsubmit=e=>{e.preventDefault();guard($("slDone"),async()=>{
       if(need>0)mv.push({productId:l.pid,batchId:null,qty:-need,note:nt});
       costTotal+=(x.d.cost||0)*qty;
       items.push({productId:l.pid,name:x.d.name,sku:x.d.sku||"",unit:x.d.unit,packName:l.pname,packQty:l.mult,qty:l.q,baseQty:qty,unitPrice:l.price,lineTotal:slLine(l)})}
-    for(const pid of pids){t.update(PD[pid].ref,{stock:PD[pid].stock,updatedAt:serverTimestamp()});
-      BT[pid].forEach(b=>{if(b.left!==b.start)t.update(b.ref,{qtyRemaining:b.left})})}
-    mv.forEach(m=>t.set(doc(collection(db,"movements")),{...m,reason:"Sale",ref:receiptNo,saleId:sref.id,by:user.email,at:serverTimestamp()}));
+    for(const pid of pids){t.update(PD[pid].ref,{stock:increment(r6(PD[pid].stock-PD[pid].start)),updatedAt:serverTimestamp()});
+      BT[pid].forEach(b=>{if(b.left!==b.start)t.update(b.ref,{qtyRemaining:increment(r6(b.left-b.start))})})}
+    mv.forEach(m=>t.set(doc(collection(db,"movements")),{...m,reason:"Sale",ref:receiptNo,saleId:sref.id,by:user.email,at:nowTs()}));
     costTotal=money(costTotal);
     sale={receiptNo,shopId:shop,items,subtotal:T.sub,discountType:pct?"percent":"amount",discountValue:dv,discount:T.disc,total:T.total,costTotal,profit:money(T.total-costTotal),payment,payments:pays.map(p=>({method:p.method,amount:p.amount})),change,customer,note,by:user.email};
-    t.set(sref,{...sale,at:serverTimestamp()})});
-  CART=[];$("slCheck").reset();payReset();await load();slListDraw();slCartDraw();slToday();
+    t.set(sref,{...sale,at:nowTs()})});
+  CART=[];$("slCheck").reset();payReset();slCartDraw();
+  try{await load();slListDraw()}catch(err){console.error(err)}
+  slToday();
   toast(`Sale ${receiptNo} recorded: ${naira(sale.total)}`);
-  try{printReceipt({...sale,at:new Date()})}catch(err){console.error(err)}})};
+  try{printReceipt({...sale,at:new Date()})}catch(err){console.error(err)}}).finally(()=>{saving=false;slSum()})};
 
 // ---- receipt template (stored in settings/receipt)
 const RC_DEF={name:"De Rhymes",addr:"",phone:"",head:"",foot:"Thank you for your purchase.",w:"80",s:"13",no:true,date:true,cu:true,pay:true,by:true,note:true};
@@ -816,7 +821,7 @@ function svFilter(k,pay=true){
   return SV[k].rows.filter(r=>inScope(r.shopId)&&(!m||hasPay(r,m))&&(!q||[r.receiptNo,r.customer,r.by,r.payment,r.note,...(r.items||[]).map(i=>i.name+" "+(i.sku||""))].join(" ").toLowerCase().includes(q)))}
 const svTime=r=>r.at?.toDate?r.at.toDate().toLocaleString("en-NG",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}):"";
 const svSum=(a,f)=>money(a.reduce((x,r)=>x+(f(r)||0),0));
-const svMAX=300;
+const svMAX=1000;
 function rvDraw(){
   const rows=SV.rv.shown=svFilter("rv");
   $("rv_o").innerHTML=`<p class="hint sv">${rows.length} receipt${rows.length===1?"":"s"}, total ${naira(svSum(rows,r=>r.total))}</p><div class="card tbl">`+(rows.length?`<table class="svt"><tr><th>Date</th><th>Receipt</th><th>Customer</th><th>Items</th><th>Payment</th><th>Total</th><th>By</th><th></th></tr>${rows.slice(0,svMAX).map((r,i)=>`<tr><td>${svTime(r)}</td><td>${esc(r.receiptNo)}</td><td>${esc(r.customer||"—")}</td><td class="it">${(r.items||[]).map(x=>`${esc(x.name)} ×${x.qty}`).join(", ")}</td><td>${esc(r.payment)}</td><td><b>${naira(r.total)}</b></td><td>${esc(r.by)}</td><td><button type="button" class="btn sm ghost" data-rc="${i}">Print</button>${isAdmin()?` <button type="button" class="btn sm ghost" data-rf="${esc(r.receiptNo)}">Refund</button>`:""}</td></tr>`).join("")}</table>`+(rows.length>svMAX?`<p class="empty">Showing the first ${svMAX} of ${rows.length}. Narrow the period or search.</p>`:""):'<p class="empty">No receipts found for this period or search.</p>')+"</div>"}
@@ -1055,13 +1060,13 @@ async function rfSubmit(){
   const rref=doc(collection(db,"refunds")),pids=[...new Set(plan.map(x=>x.pid))],bids=[...new Set(plan.filter(x=>x.bid).map(x=>x.bid))];
   await runTx(async t=>{
     const PD={},BT={};
-    for(const pid of pids){const s=await t.get(doc(db,"products",pid));if(!s.exists())throw new Error("A returned product no longer exists.");PD[pid]={ref:s.ref,stock:s.data().stock}}
-    for(const id of bids){const s=await t.get(doc(db,"batches",id));BT[id]=s.exists()?{ref:s.ref,left:s.data().qtyRemaining}:null}
+    for(const pid of pids){const s=await t.get(doc(db,"products",pid));if(!s.exists())throw new Error("A returned product no longer exists.");PD[pid]={ref:s.ref,stock:s.data().stock,start:s.data().stock}}
+    for(const id of bids){const s=await t.get(doc(db,"batches",id));BT[id]=s.exists()?{ref:s.ref,left:s.data().qtyRemaining,start:s.data().qtyRemaining}:null}
     plan.forEach(x=>{PD[x.pid].stock=r6(PD[x.pid].stock+x.qty);const b=x.bid&&BT[x.bid];if(b)b.left=r6(b.left+x.qty);
-      t.set(doc(collection(db,"movements")),{productId:x.pid,batchId:b?x.bid:null,qty:x.qty,reason:"Return",note:`Refund ${refundNo} for ${sale.receiptNo}`,ref:refundNo,saleId:sale.id,by:user.email,at:serverTimestamp()})});
-    pids.forEach(pid=>t.update(PD[pid].ref,{stock:PD[pid].stock,updatedAt:serverTimestamp()}));
-    Object.values(BT).forEach(b=>{if(b)t.update(b.ref,{qtyRemaining:b.left})});
-    t.set(rref,{refundNo,shopId:sale.shopId||shop||"",saleId:sale.id,receiptNo:sale.receiptNo,customer:sale.customer||"",items,amount,method,reason,note,costBack,writeOff,profitLost:money(amount-costBack),by:user.email,at:serverTimestamp()})});
+      t.set(doc(collection(db,"movements")),{productId:x.pid,batchId:b?x.bid:null,qty:x.qty,reason:"Return",note:`Refund ${refundNo} for ${sale.receiptNo}`,ref:refundNo,saleId:sale.id,by:user.email,at:nowTs()})});
+    pids.forEach(pid=>t.update(PD[pid].ref,{stock:increment(r6(PD[pid].stock-PD[pid].start)),updatedAt:serverTimestamp()}));
+    Object.values(BT).forEach(b=>{if(b)t.update(b.ref,{qtyRemaining:increment(r6(b.left-b.start))})});
+    t.set(rref,{refundNo,shopId:sale.shopId||shop||"",saleId:sale.id,receiptNo:sale.receiptNo,customer:sale.customer||"",items,amount,method,reason,note,costBack,writeOff,profitLost:money(amount-costBack),by:user.email,at:nowTs()})});
   await load();toast(`Refund ${refundNo} recorded: ${naira(amount)}`);
   await rfFind(sale.receiptNo);rfHistory()}
 
